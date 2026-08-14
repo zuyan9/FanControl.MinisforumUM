@@ -97,6 +97,16 @@ jobs:
               "-p:Version=$env:PLUGIN_VERSION" `
               -p:ContinuousIntegrationBuild=true
 
+      - name: Run hardware-free tests
+        shell: pwsh
+        run: |
+          dotnet run `
+              --project .\tests\FanControl.MinisforumUM780XTX.Tests.csproj `
+              --configuration Release `
+              "-p:FanControlDir=$env:FANCONTROL_DIR" `
+              "-p:Version=$env:PLUGIN_VERSION" `
+              -p:ContinuousIntegrationBuild=true
+
       - name: Verify plugin version
         shell: pwsh
         run: |

@@ -8,16 +8,36 @@ internal readonly record struct EcWrite(ushort Address, byte Value);
 
 internal readonly record struct EcExpectation(ushort Address, byte Value);
 
-internal sealed class PawnIoTransport : IDisposable
+internal interface IF7Transport : IDisposable
+{
+    byte[] Read(ushort[] addresses);
+
+    void WriteVerified(
+        EcExpectation[] before,
+        EcWrite[] writes,
+        Action? beforeWrites = null);
+
+    void WriteCpuVerified(
+        EcExpectation[] before,
+        EcWrite[] writes,
+        ReadOnlySpan<byte> baseline);
+}
+
+internal sealed class PawnIoTransport : IF7Transport
 {
     private static readonly TimeSpan IsaTimeout = TimeSpan.FromSeconds(1);
     private readonly Mutex isaMutex;
     private readonly PawnIoNative native;
+    private readonly F7PlatformProfile profile;
+    private readonly bool writesEnabled;
     private bool disposed;
     private Exception? poisonCause;
 
-    internal PawnIoTransport()
+    internal PawnIoTransport(F7PlatformProfile profile, bool writesEnabled)
     {
+        ArgumentNullException.ThrowIfNull(profile);
+        this.profile = profile;
+        this.writesEnabled = writesEnabled;
         Mutex mutex = new(false, F7bsdProfile.IsaMutexName);
         PawnIoNative? candidate = null;
         try
@@ -50,25 +70,26 @@ internal sealed class PawnIoTransport : IDisposable
             byte[] pnp = Enumerable.Range(0x20, 3)
                 .Select(ReadPnpRegister)
                 .ToArray();
-            if (!pnp.SequenceEqual(F7bsdProfile.ExpectedPnpIdentity))
+            if (!profile.MatchesPnp(pnp))
             {
                 throw new PlatformNotSupportedException(
-                    "The physical Super-I/O is not the UM780 XTX IT5571 profile.");
+                    $"The physical PNP identity does not match the compiled " +
+                    $"{profile.DisplayName} profile; no EC XRAM access was attempted.");
             }
-
             byte[] controller = F7bsdProfile.ControllerProfileAddresses
                 .Select(ReadByte)
                 .ToArray();
-            if (!controller.SequenceEqual(F7bsdProfile.ExpectedControllerProfile))
+            if (!profile.MatchesController(pnp, controller))
             {
                 throw new PlatformNotSupportedException(
-                    "The live controller is not the UM780 XTX F7BSD profile.");
+                    $"The physical and live controller signatures do not match " +
+                    $"the compiled {profile.DisplayName} profile.");
             }
             return 0;
         });
     }
 
-    internal byte[] Read(ushort[] addresses)
+    public byte[] Read(ushort[] addresses)
     {
         ArgumentNullException.ThrowIfNull(addresses);
         F7bsdProfile.AssertReadsAllowed(addresses);
@@ -79,34 +100,29 @@ internal sealed class PawnIoTransport : IDisposable
         });
     }
 
-    internal void WriteVerified(EcWrite[] writes) => WriteVerified([], writes);
-
-    internal void WriteCpuVerified(EcWrite[] writes, ReadOnlySpan<byte> baseline)
-    {
-        WriteCpuVerified([], writes, baseline);
-    }
-
-    internal void WriteCpuVerified(
+    public void WriteCpuVerified(
         EcExpectation[] before,
         EcWrite[] writes,
         ReadOnlySpan<byte> baseline)
     {
+        EnsureWritesEnabled();
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(writes);
         F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
-        F7bsdProfile.AssertCpuWritesAllowed(writes, baseline);
+        F7bsdProfile.AssertCpuWritesAllowed(profile, writes, baseline);
         WriteVerifiedCore(before, writes, null);
     }
 
-    internal void WriteVerified(
+    public void WriteVerified(
         EcExpectation[] before,
         EcWrite[] writes,
         Action? beforeWrites = null)
     {
+        EnsureWritesEnabled();
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(writes);
         F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
-        F7bsdProfile.AssertWritesAllowed(writes);
+        F7bsdProfile.AssertWritesAllowed(profile, writes);
         WriteVerifiedCore(before, writes, beforeWrites);
     }
 
@@ -305,6 +321,15 @@ internal sealed class PawnIoTransport : IDisposable
             throw AmbiguousState(
                 "PawnIO transport was poisoned by an earlier selector failure.",
                 poisonCause);
+        }
+    }
+
+    private void EnsureWritesEnabled()
+    {
+        if (!writesEnabled)
+        {
+            throw new InvalidOperationException(
+                $"Writes are disabled for the {profile.DisplayName} transport.");
         }
     }
 
