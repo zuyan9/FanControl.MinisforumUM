@@ -2,14 +2,14 @@ namespace FanControl.MinisforumUM780XTX;
 
 internal sealed class PawnIoF7bsdBackend : IDisposable
 {
-    private const int CpuSnapshotAttempts = 4;
+    private const int StableSnapshotAttempts = 4;
     private const int SystemReleaseSteps = 4;
     private const int SystemHandoffPollAttempts = 16;
     private static readonly TimeSpan SystemHandoffPollDelay =
         TimeSpan.FromMilliseconds(100);
 
     private readonly Func<HostIdentitySnapshot> hostIdentityReader;
-    private readonly Func<F7PlatformProfile, bool, IF7Transport> transportFactory;
+    private readonly Func<F7PlatformProfile, IF7Transport> transportFactory;
     private IF7Transport? transport;
     private F7PlatformProfile? profile;
     private byte[]? cpuBaseline;
@@ -23,14 +23,13 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     internal PawnIoF7bsdBackend()
         : this(
             HostIdentity.Read,
-            static (selected, writesEnabled) =>
-                new PawnIoTransport(selected, writesEnabled))
+            static selected => new PawnIoTransport(selected))
     {
     }
 
     internal PawnIoF7bsdBackend(
         Func<HostIdentitySnapshot> hostIdentityReader,
-        Func<F7PlatformProfile, bool, IF7Transport> transportFactory)
+        Func<F7PlatformProfile, IF7Transport> transportFactory)
     {
         this.hostIdentityReader = hostIdentityReader ??
             throw new ArgumentNullException(nameof(hostIdentityReader));
@@ -38,7 +37,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             throw new ArgumentNullException(nameof(transportFactory));
     }
 
-    internal bool WritesEnabled { get; private set; }
+    internal bool IsInitialized => startupRecovery.HasValue;
 
     internal F7PlatformProfile ActiveProfile => profile ??
         throw new InvalidOperationException("The platform profile is unavailable.");
@@ -48,28 +47,25 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         if (transport is not null)
         {
             return startupRecovery ?? throw new InvalidOperationException(
-                "F7BSD initialization did not complete.");
+                "Minisforum EC initialization did not complete.");
         }
 
         HostIdentitySnapshot host = hostIdentityReader();
         F7PlatformProfile selected = F7ProfileCatalog.Resolve(host);
         profile = selected;
-        if (!selected.WritesEnabledByDefault)
-        {
-            throw new PlatformNotSupportedException(
-                $"Controls are not enabled for the compiled {selected.DisplayName} " +
-                "profile.");
-        }
-        // Keep authorization explicit at both backend and transport boundaries so
-        // a profile can be disabled fail-closed without changing the write paths.
-        WritesEnabled = selected.WritesEnabledByDefault;
-        IF7Transport active = transportFactory(selected, WritesEnabled);
+        IF7Transport active = transportFactory(selected);
         transport = active;
 
-        byte[] cpuSnapshot = ReadStableCpuSnapshot(active);
+        byte[] cpuSnapshot = ReadStable(
+            active,
+            F7bsdProfile.CpuSnapshotAddresses,
+            "CPU fan table");
         CpuStartupClassification cpuState =
             F7bsdProfile.ClassifyCpuStartupSnapshot(selected, cpuSnapshot);
-        byte[] systemPolicy = ReadStableSystemPolicy(active);
+        byte[] systemPolicy = ReadStable(
+            active,
+            F7bsdProfile.SystemPolicyAddresses,
+            "system-fan policy");
         F7bsdProfile.ValidateSystemPolicy(selected, systemPolicy);
         byte[] systemSnapshot = active.Read(F7bsdProfile.SystemStateAddresses);
         SystemStartupState systemState =
@@ -101,17 +97,21 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         {
             F7bsdProfile.ValidateFirmwareCpuSnapshot(
                 selected,
-                ReadStableCpuSnapshot(active),
+                ReadStable(
+                    active,
+                    F7bsdProfile.CpuSnapshotAddresses,
+                    "CPU fan table"),
                 ActiveCpuBaseline());
         }
         F7bsdProfile.ValidateSystemPolicy(
             selected,
-            ReadStableSystemPolicy(active));
+            ReadStable(
+                active,
+                F7bsdProfile.SystemPolicyAddresses,
+                "system-fan policy"));
 
         F7bsdStartupRecovery result = new(
-            selected.Id,
             selected.DisplayName,
-            WritesEnabled,
             cpuState.Selector,
             recoveredCpu,
             recoveredSystem,
@@ -122,6 +122,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal F7bsdTelemetry ReadTelemetry()
     {
+        EnsureInitialized();
         IF7Transport active = ActiveTransport();
         byte[] sample = active.Read(F7bsdProfile.TelemetryAddresses);
         int cpuRpm = ReadStableCounter(
@@ -139,13 +140,13 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal void ResetCpu()
     {
-        EnsureWritesEnabled();
+        EnsureInitialized();
         RestoreCpu(ActiveTransport());
     }
 
     internal void ResetSystem()
     {
-        EnsureWritesEnabled();
+        EnsureInitialized();
         ReleaseSystem(ActiveTransport());
     }
 
@@ -157,6 +158,9 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             return;
         }
 
+        // Stop public telemetry/control calls before restoration begins. Private
+        // recovery below remains available for retries if cleanup fails.
+        startupRecovery = null;
         List<Exception> failures = [];
         TryRestore(
             systemMayBeOwned || systemRestorePending,
@@ -166,15 +170,13 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             () => RestoreCpu(old));
         if (failures.Count != 0)
         {
-            throw new AggregateException("F7BSD restoration failed.", failures);
+            throw new AggregateException("Minisforum EC restoration failed.", failures);
         }
 
         old.Dispose();
         transport = null;
         profile = null;
-        WritesEnabled = false;
         cpuBaseline = null;
-        startupRecovery = null;
 
         void TryRestore(bool needed, Action restore)
         {
@@ -195,7 +197,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal byte SetCpu(byte requestedCode)
     {
-        EnsureWritesEnabled();
+        EnsureInitialized();
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             requestedCode,
             F7bsdProfile.MaximumCode);
@@ -207,7 +209,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         }
         try
         {
-            byte[] snapshot = ReadStableCpuSnapshot(active);
+            byte[] snapshot = ReadStable(
+                active,
+                F7bsdProfile.CpuSnapshotAddresses,
+                "CPU fan table");
             byte[] baseline = ActiveCpuBaseline();
             F7bsdProfile.ValidateCpuWritePrecondition(
                 ActiveProfile,
@@ -254,7 +259,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     private void RestoreCpuCore(IF7Transport active)
     {
         byte[] baseline = ActiveCpuBaseline();
-        byte[] snapshot = ReadStableCpuSnapshot(active);
+        byte[] snapshot = ReadStable(
+            active,
+            F7bsdProfile.CpuSnapshotAddresses,
+            "CPU fan table");
         CpuStartupClassification classification =
             F7bsdProfile.ClassifyCpuStartupSnapshot(ActiveProfile, snapshot);
         EnsureCpuProfile(classification, baseline);
@@ -277,7 +285,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
         try
         {
-            byte[] verified = ReadStableCpuSnapshot(active);
+            byte[] verified = ReadStable(
+                active,
+                F7bsdProfile.CpuSnapshotAddresses,
+                "CPU fan table");
             F7bsdProfile.ValidateFirmwareCpuSnapshot(
                 ActiveProfile,
                 verified,
@@ -299,7 +310,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal byte SetSystem(byte requestedCode)
     {
-        EnsureWritesEnabled();
+        EnsureInitialized();
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             requestedCode,
             ActiveProfile.SystemMaximumCode);
@@ -312,7 +323,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         }
         try
         {
-            byte[] policy = ReadStableSystemPolicy(active);
+            byte[] policy = ReadStable(
+                active,
+                F7bsdProfile.SystemPolicyAddresses,
+                "system-fan policy");
             F7bsdProfile.ValidateSystemPolicy(ActiveProfile, policy);
             EcExpectation[] policyExpectations =
                 F7bsdProfile.SystemPolicyExpectations(policy);
@@ -524,34 +538,22 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             $"System fan did not {direction}; effective byte ended at 0x{last:X2}.");
     }
 
-    private static byte[] ReadStableCpuSnapshot(IF7Transport active)
+    private static byte[] ReadStable(
+        IF7Transport active,
+        ushort[] addresses,
+        string description)
     {
-        byte[] previous = active.Read(F7bsdProfile.CpuSnapshotAddresses);
-        for (int attempt = 1; attempt < CpuSnapshotAttempts; attempt++)
+        byte[] previous = active.Read(addresses);
+        for (int attempt = 1; attempt < StableSnapshotAttempts; attempt++)
         {
-            byte[] current = active.Read(F7bsdProfile.CpuSnapshotAddresses);
+            byte[] current = active.Read(addresses);
             if (current.AsSpan().SequenceEqual(previous))
             {
                 return current;
             }
             previous = current;
         }
-        throw new IOException("The CPU fan table did not produce a stable snapshot.");
-    }
-
-    private static byte[] ReadStableSystemPolicy(IF7Transport active)
-    {
-        byte[] previous = active.Read(F7bsdProfile.SystemPolicyAddresses);
-        for (int attempt = 1; attempt < CpuSnapshotAttempts; attempt++)
-        {
-            byte[] current = active.Read(F7bsdProfile.SystemPolicyAddresses);
-            if (current.AsSpan().SequenceEqual(previous))
-            {
-                return current;
-            }
-            previous = current;
-        }
-        throw new IOException("The system-fan policy did not produce a stable snapshot.");
+        throw new IOException($"The {description} did not produce a stable snapshot.");
     }
 
     private static void EnsureCpuProfile(
@@ -578,12 +580,12 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     private byte[] ActiveCpuBaseline() => cpuBaseline ??
         throw new InvalidOperationException("The canonical CPU baseline is unavailable.");
 
-    private void EnsureWritesEnabled()
+    private void EnsureInitialized()
     {
-        if (!WritesEnabled)
+        if (!IsInitialized)
         {
             throw new InvalidOperationException(
-                $"Controls are disabled for {ActiveProfile.DisplayName}.");
+                "The Minisforum EC backend did not complete initialization.");
         }
     }
 
@@ -613,9 +615,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 }
 
 internal readonly record struct F7bsdStartupRecovery(
-    string ProfileId,
     string ProfileName,
-    bool WritesEnabled,
     byte CpuSelector,
     bool CpuRecovered,
     bool SystemRecovered,

@@ -88,15 +88,6 @@ jobs:
           "FANCONTROL_DIR=$extractDir" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Build plugin
-        shell: pwsh
-        run: |
-          dotnet build .\FanControl.MinisforumUM780XTX.csproj `
-              --configuration Release `
-              "-p:FanControlDir=$env:FANCONTROL_DIR" `
-              "-p:Version=$env:PLUGIN_VERSION" `
-              -p:ContinuousIntegrationBuild=true
-
       - name: Run hardware-free tests
         shell: pwsh
         run: |

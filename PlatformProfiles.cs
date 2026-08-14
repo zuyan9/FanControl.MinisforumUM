@@ -1,9 +1,6 @@
 namespace FanControl.MinisforumUM780XTX;
 
-internal readonly record struct EcVersion(int Major, int Minor)
-{
-    public override string ToString() => $"{Major}.{Minor}";
-}
+internal readonly record struct EcVersion(int Major, int Minor);
 
 internal sealed record HostIdentitySnapshot(
     string Product,
@@ -89,14 +86,6 @@ internal sealed class HostRequirement
         ecVersions.Contains(actual.EcVersion) &&
         (Sku is null || string.Equals(actual.Sku, Sku, StringComparison.Ordinal));
 
-    internal string Describe()
-    {
-        string sku = Sku is null ? string.Empty : $", SKU {Sku}";
-        return $"{Product}/{Board} revision {BoardVersion}{sku}, BIOS " +
-            $"{string.Join(" or ", biosVersions)}, EC " +
-            string.Join(" or ", ecVersions.Select(item => item.ToString()));
-    }
-
     internal bool Overlaps(HostRequirement other) =>
         string.Equals(Product, other.Product, StringComparison.Ordinal) &&
         Compatible(SystemVersion, other.SystemVersion) &&
@@ -175,8 +164,6 @@ internal sealed class F7PlatformProfile
     internal F7PlatformProfile(
         string id,
         string displayName,
-        string[] models,
-        bool writesEnabledByDefault,
         HostRequirement[] hosts,
         ByteSignature pnpIdentity,
         ByteSignature controllerIdentity,
@@ -186,15 +173,10 @@ internal sealed class F7PlatformProfile
     {
         Id = id;
         DisplayName = displayName;
-        Models = Array.AsReadOnly((string[])models.Clone());
-        WritesEnabledByDefault = writesEnabledByDefault;
         this.hosts = (HostRequirement[])hosts.Clone();
         PnpIdentity = pnpIdentity;
         ControllerIdentity = controllerIdentity;
-        CpuProfiles = Array.AsReadOnly(cpuProfiles.Select(item => new CpuProfileDefinition(
-            item.Selector,
-            item.Bands.ToArray(),
-            item.Baseline.ToArray())).ToArray());
+        CpuProfiles = Array.AsReadOnly((CpuProfileDefinition[])cpuProfiles.Clone());
         expectedSystemTable = (byte[])systemPolicy.Clone();
         SystemMaximumCode = systemMaximumCode;
         Validate();
@@ -203,10 +185,6 @@ internal sealed class F7PlatformProfile
     internal string Id { get; }
 
     internal string DisplayName { get; }
-
-    internal IReadOnlyList<string> Models { get; }
-
-    internal bool WritesEnabledByDefault { get; }
 
     internal ByteSignature PnpIdentity { get; }
 
@@ -238,9 +216,6 @@ internal sealed class F7PlatformProfile
     {
         if (string.IsNullOrWhiteSpace(Id) ||
             string.IsNullOrWhiteSpace(DisplayName) ||
-            Models.Count == 0 ||
-            Models.Any(string.IsNullOrWhiteSpace) ||
-            Models.Distinct(StringComparer.Ordinal).Count() != Models.Count ||
             hosts.Length == 0 ||
             CpuProfiles.Count == 0 ||
             expectedSystemTable.Length != F7bsdProfile.SystemPolicyAddresses.Length ||
@@ -422,8 +397,6 @@ internal static class F7ProfileCatalog
         new(
             "f7bsd",
             "F7BSD",
-            ["UM780 XTX", "UM790 XTX"],
-            writesEnabledByDefault: true,
             [Host(
                 "Venus series",
                 null,
@@ -440,8 +413,6 @@ internal static class F7ProfileCatalog
         new(
             "f7bsh-f7bsd",
             "F7BSD EC on F7BSH",
-            ["UM690 Pro"],
-            writesEnabledByDefault: true,
             [Host(
                 "Venus series",
                 null,
@@ -458,8 +429,6 @@ internal static class F7ProfileCatalog
         new(
             "f7bsc",
             "F7BSC",
-            ["UM760 Pro", "UM780 Pro", "UM790 Pro"],
-            writesEnabledByDefault: true,
             [Host(
                 "Venus series",
                 null,
@@ -476,8 +445,6 @@ internal static class F7ProfileCatalog
         new(
             "f7bsi",
             "F7BSI/F7BSW",
-            ["UM760 Slim", "UM870 Slim", "UM760 Plus", "UM870 Plus"],
-            writesEnabledByDefault: true,
             [
                 Host(
                     "EliteMini Series",
@@ -505,8 +472,6 @@ internal static class F7ProfileCatalog
         new(
             "hpbsd",
             "HPBSD",
-            ["UM880 Pro", "UM890 Pro"],
-            writesEnabledByDefault: true,
             [
                 Host(
                     "EliteMini Series",

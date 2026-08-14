@@ -29,15 +29,13 @@ internal sealed class PawnIoTransport : IF7Transport
     private readonly Mutex isaMutex;
     private readonly PawnIoNative native;
     private readonly F7PlatformProfile profile;
-    private readonly bool writesEnabled;
     private bool disposed;
     private Exception? poisonCause;
 
-    internal PawnIoTransport(F7PlatformProfile profile, bool writesEnabled)
+    internal PawnIoTransport(F7PlatformProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
         this.profile = profile;
-        this.writesEnabled = writesEnabled;
         Mutex mutex = new(false, F7bsdProfile.IsaMutexName);
         PawnIoNative? candidate = null;
         try
@@ -105,7 +103,6 @@ internal sealed class PawnIoTransport : IF7Transport
         EcWrite[] writes,
         ReadOnlySpan<byte> baseline)
     {
-        EnsureWritesEnabled();
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(writes);
         F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
@@ -118,7 +115,6 @@ internal sealed class PawnIoTransport : IF7Transport
         EcWrite[] writes,
         Action? beforeWrites = null)
     {
-        EnsureWritesEnabled();
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(writes);
         F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
@@ -321,15 +317,6 @@ internal sealed class PawnIoTransport : IF7Transport
             throw AmbiguousState(
                 "PawnIO transport was poisoned by an earlier selector failure.",
                 poisonCause);
-        }
-    }
-
-    private void EnsureWritesEnabled()
-    {
-        if (!writesEnabled)
-        {
-            throw new InvalidOperationException(
-                $"Writes are disabled for the {profile.DisplayName} transport.");
         }
     }
 

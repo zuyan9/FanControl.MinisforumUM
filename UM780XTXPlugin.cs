@@ -87,7 +87,7 @@ public sealed class UM780XTXPlugin : IPlugin2
     {
         container.FanSensors.AddRange([cpuFan, systemFan]);
         container.TempSensors.AddRange([cpuTemperature, systemTemperature]);
-        if (backend?.WritesEnabled == true)
+        if (backend?.IsInitialized == true)
         {
             container.ControlSensors.AddRange([cpuControl, systemControl]);
         }
@@ -175,8 +175,17 @@ public sealed class UM780XTXPlugin : IPlugin2
         }
     }
 
-    private PawnIoF7bsdBackend ActiveBackend() => backend ??
-        throw new InvalidOperationException("The Minisforum EC backend is unavailable.");
+    private PawnIoF7bsdBackend ActiveBackend()
+    {
+        PawnIoF7bsdBackend active = backend ??
+            throw new InvalidOperationException("The Minisforum EC backend is unavailable.");
+        if (!active.IsInitialized)
+        {
+            throw new InvalidOperationException(
+                "The Minisforum EC backend did not complete initialization.");
+        }
+        return active;
+    }
 
     private void Apply(F7bsdTelemetry telemetry)
     {
@@ -227,11 +236,8 @@ public sealed class UM780XTXPlugin : IPlugin2
         string detail = recovered.Count == 0
             ? "no startup recovery needed"
             : "startup recovery: " + string.Join(", ", recovered);
-        string access = recovery.WritesEnabled
-            ? "controls enabled"
-            : "controls disabled";
         return $"Minisforum {recovery.ProfileName} initialized " +
-            $"({profile}; {access}; {detail}).";
+            $"({profile}; controls enabled; {detail}).";
     }
 
     private sealed class Sensor(string id, string name) : IPluginSensor

@@ -42,16 +42,84 @@ internal static class Program
         0, 0, 0,
     ];
 
+    private static readonly SupportedHost[] SupportedHosts =
+    [
+        new("f7bsd", F7bsdHost()),
+        new("f7bsh-f7bsd", F7bshHost()),
+        new("f7bsc", F7bscHost("1.07")),
+        new("f7bsc", F7bscHost("1.09")),
+        new("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.08")),
+        new("f7bsi", F7bsiHost("F7BSW", "MGF7BSW", "1.01")),
+        new("hpbsd", HpbsdHost(ecMinor: 1)),
+        new("hpbsd", HpbsdHost(ecMinor: 2)),
+    ];
+
+    private static readonly ExpectedProfile[] ExpectedProfiles =
+    [
+        new(
+            "F7BSD",
+            "f7bsd",
+            StandardSystemPolicy,
+            51,
+            [
+                new(0x00, StandardBands,
+                    [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
+                new(0xb1, StandardBands,
+                    [0, 16, 18, 21, 28, 32, 33, 0, 10, 33, 58, 60, 16, 200]),
+                new(0xb2, PerformanceBands,
+                    [0, 18, 21, 28, 36, 42, 46, 0, 15, 77, 66, 40, 50, 100]),
+            ]),
+        new(
+            "F7BSC",
+            "f7bsc",
+            StandardSystemPolicy,
+            51,
+            [
+                new(0x00, StandardBands,
+                    [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
+                new(0xb1, StandardBands,
+                    [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
+                new(0xb2, StandardBands,
+                    [0, 18, 21, 28, 36, 40, 46, 0, 15, 77, 66, 40, 50, 100]),
+            ]),
+        new(
+            "F7BSI",
+            "f7bsi",
+            ReducedSystemPolicy,
+            51,
+            [
+                new(0x00, StandardBands,
+                    [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
+                new(0xb1, StandardBands,
+                    [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
+                new(0xb2, PerformanceBands,
+                    [0, 18, 22, 29, 31, 34, 37, 0, 20, 77, 16, 25, 37, 125]),
+            ]),
+        new(
+            "HPBSD",
+            "hpbsd",
+            ReducedSystemPolicy,
+            40,
+            [
+                new(0xb1, StandardBands,
+                    [0, 18, 22, 24, 28, 32, 34, 0, 14, 16, 21, 28, 10, 154]),
+                new(0xb2, PerformanceBands,
+                    [0, 18, 21, 28, 30, 33, 36, 0, 15, 77, 16, 21, 37, 255]),
+            ]),
+    ];
+
     private static int Main()
     {
-        (string Name, Action Body)[] tests =
+        List<(string Name, Action Body)> tests =
         [
             ("host profile resolution", HostProfileResolution),
             ("host mismatch rejection", HostMismatchRejection),
-            ("F7BSD canonical tables", F7bsdCanonicalTables),
-            ("F7BSC canonical tables", F7bscCanonicalTables),
-            ("F7BSI canonical tables", F7bsiCanonicalTables),
-            ("HPBSD canonical tables", HpbsdCanonicalTables),
+        ];
+        tests.AddRange(ExpectedProfiles.Select(expected =>
+            ($"{expected.Name} canonical tables",
+                (Action)(() => AssertCanonicalProfile(expected)))));
+        tests.AddRange(
+        [
             ("controller masks", ControllerMaskBehavior),
             ("all compiled profiles enable normal control", AllProfilesEnableNormalControl),
             ("immutable policy before recovery", CorruptPolicyBlocksRecovery),
@@ -60,8 +128,9 @@ internal static class Program
             ("F7BSC normal writes", F7bscNormalWrites),
             ("HPBSD system engage and release", HpbsdSystemEngageAndRelease),
             ("atomic precondition drift", AtomicPreconditionDrift),
+            ("failed disposal closes public control", FailedDisposeClosesControl),
             ("failed startup recovery cleanup", FailedStartupRecoveryCleanup),
-        ];
+        ]);
 
         int failures = 0;
         foreach ((string name, Action body) in tests)
@@ -78,27 +147,15 @@ internal static class Program
             }
         }
 
-        Console.WriteLine($"{tests.Length - failures}/{tests.Length} tests passed.");
+        Console.WriteLine($"{tests.Count - failures}/{tests.Count} tests passed.");
         return failures == 0 ? 0 : 1;
     }
 
     private static void HostProfileResolution()
     {
-        (HostIdentitySnapshot Host, string ProfileId)[] cases =
-        [
-            (F7bsdHost(), "f7bsd"),
-            (F7bshHost(), "f7bsh-f7bsd"),
-            (F7bscHost("1.07"), "f7bsc"),
-            (F7bscHost("1.09"), "f7bsc"),
-            (F7bsiHost("F7BSI", "MGF7BSI", "1.08"), "f7bsi"),
-            (F7bsiHost("F7BSW", "MGF7BSW", "1.01"), "f7bsi"),
-            (HpbsdHost(ecMinor: 1), "hpbsd"),
-            (HpbsdHost(ecMinor: 2), "hpbsd"),
-        ];
-
-        foreach ((HostIdentitySnapshot host, string profileId) in cases)
+        foreach (SupportedHost supported in SupportedHosts)
         {
-            Equal(profileId, F7ProfileCatalog.Resolve(host).Id);
+            Equal(supported.ProfileId, F7ProfileCatalog.Resolve(supported.Host).Id);
         }
     }
 
@@ -125,82 +182,36 @@ internal static class Program
         }
     }
 
-    private static void F7bsdCanonicalTables() => AssertCanonicalProfile(
-        "f7bsd",
-        StandardSystemPolicy,
-        51,
-        new(0x00, StandardBands,
-            [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
-        new(0xb1, StandardBands,
-            [0, 16, 18, 21, 28, 32, 33, 0, 10, 33, 58, 60, 16, 200]),
-        new(0xb2, PerformanceBands,
-            [0, 18, 21, 28, 36, 42, 46, 0, 15, 77, 66, 40, 50, 100]));
-
-    private static void F7bscCanonicalTables() => AssertCanonicalProfile(
-        "f7bsc",
-        StandardSystemPolicy,
-        51,
-        new(0x00, StandardBands,
-            [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
-        new(0xb1, StandardBands,
-            [0, 16, 18, 21, 28, 34, 36, 0, 10, 33, 58, 60, 16, 200]),
-        new(0xb2, StandardBands,
-            [0, 18, 21, 28, 36, 40, 46, 0, 15, 77, 66, 40, 50, 100]));
-
-    private static void F7bsiCanonicalTables() => AssertCanonicalProfile(
-        "f7bsi",
-        ReducedSystemPolicy,
-        51,
-        new(0x00, StandardBands,
-            [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
-        new(0xb1, StandardBands,
-            [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
-        new(0xb2, PerformanceBands,
-            [0, 18, 22, 29, 31, 34, 37, 0, 20, 77, 16, 25, 37, 125]));
-
-    private static void HpbsdCanonicalTables() => AssertCanonicalProfile(
-        "hpbsd",
-        ReducedSystemPolicy,
-        40,
-        new(0xb1, StandardBands,
-            [0, 18, 22, 24, 28, 32, 34, 0, 14, 16, 21, 28, 10, 154]),
-        new(0xb2, PerformanceBands,
-            [0, 18, 21, 28, 30, 33, 36, 0, 15, 77, 16, 21, 37, 255]));
-
-    private static void AssertCanonicalProfile(
-        string id,
-        byte[] expectedSystemPolicy,
-        byte expectedSystemMaximum,
-        params ExpectedCpu[] expectedCpus)
+    private static void AssertCanonicalProfile(ExpectedProfile expected)
     {
-        F7PlatformProfile profile = F7ProfileCatalog.Get(id);
-        Equal(expectedSystemMaximum, profile.SystemMaximumCode);
-        Equal(expectedCpus.Length, profile.CpuProfiles.Count);
-        SequenceEqual(expectedSystemPolicy, profile.ExpectedSystemTable.ToArray());
-        F7bsdProfile.ValidateSystemPolicy(profile, expectedSystemPolicy);
+        F7PlatformProfile profile = F7ProfileCatalog.Get(expected.Id);
+        Equal(expected.SystemMaximum, profile.SystemMaximumCode);
+        Equal(expected.Cpus.Length, profile.CpuProfiles.Count);
+        SequenceEqual(expected.SystemPolicy, profile.ExpectedSystemTable.ToArray());
+        F7bsdProfile.ValidateSystemPolicy(profile, expected.SystemPolicy);
 
-        byte[] corruptPolicy = (byte[])expectedSystemPolicy.Clone();
+        byte[] corruptPolicy = (byte[])expected.SystemPolicy.Clone();
         corruptPolicy[0] ^= 1;
         Throws<PlatformNotSupportedException>(
             () => F7bsdProfile.ValidateSystemPolicy(profile, corruptPolicy));
 
-        foreach (ExpectedCpu expected in expectedCpus)
+        foreach (ExpectedCpu cpu in expected.Cpus)
         {
             CpuProfileDefinition actual = profile.CpuProfiles.Single(
-                item => item.Selector == expected.Selector);
-            SequenceEqual(expected.Bands, actual.Bands.ToArray());
-            SequenceEqual(expected.Baseline, actual.Baseline.ToArray());
+                item => item.Selector == cpu.Selector);
+            SequenceEqual(cpu.Bands, actual.Bands.ToArray());
+            SequenceEqual(cpu.Baseline, actual.Baseline.ToArray());
 
-            byte[] snapshot = BuildCpuSnapshot(expected);
+            byte[] snapshot = BuildCpuSnapshot(cpu);
             CpuStartupClassification classification =
                 F7bsdProfile.ClassifyCpuStartupSnapshot(profile, snapshot);
             Equal(CpuStartupState.Firmware, classification.State);
-            Equal(expected.Selector, classification.Selector);
-            SequenceEqual(expected.Baseline, classification.Baseline);
+            Equal(cpu.Selector, classification.Selector);
+            SequenceEqual(cpu.Baseline, classification.Baseline);
             F7bsdProfile.ValidateFirmwareCpuSnapshot(
                 profile,
                 snapshot,
-                expected.Baseline);
+                cpu.Baseline);
 
             byte[] corruptSnapshot = (byte[])snapshot.Clone();
             corruptSnapshot[2] ^= 1;
@@ -242,27 +253,14 @@ internal static class Program
 
     private static void AllProfilesEnableNormalControl()
     {
-        (string ProfileId, HostIdentitySnapshot Host)[] cases =
-        [
-            ("f7bsd", F7bsdHost()),
-            ("f7bsh-f7bsd", F7bshHost()),
-            ("f7bsc", F7bscHost("1.09")),
-            ("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.08")),
-            ("hpbsd", HpbsdHost(ecMinor: 2)),
-        ];
-
-        foreach ((string profileId, HostIdentitySnapshot host) in cases)
+        foreach (SupportedHost supported in SupportedHosts)
         {
-            F7PlatformProfile profile = F7ProfileCatalog.Get(profileId);
-            True(profile.WritesEnabledByDefault);
+            F7PlatformProfile profile = F7ProfileCatalog.Get(supported.ProfileId);
             FakeTransport transport = new(profile, selector: 0xb1);
-            PawnIoF7bsdBackend backend = CreateBackend(host, transport);
+            PawnIoF7bsdBackend backend = CreateBackend(supported.Host, transport);
 
-            F7bsdStartupRecovery recovery = backend.Initialize();
-            Equal(profileId, recovery.ProfileId);
-            True(recovery.WritesEnabled);
-            True(backend.WritesEnabled);
-            True(transport.WritesAuthorized);
+            backend.Initialize();
+            True(backend.IsInitialized);
             Equal(0, transport.WriteAttempts);
 
             Equal((byte)19, backend.SetCpu(19));
@@ -272,6 +270,7 @@ internal static class Program
             True(transport.WriteAttempts > 0);
 
             backend.Dispose();
+            False(backend.IsInitialized);
             True(transport.Disposed);
         }
     }
@@ -286,8 +285,7 @@ internal static class Program
         PawnIoF7bsdBackend backend = CreateBackend(F7bsdHost(), transport);
 
         Throws<PlatformNotSupportedException>(() => backend.Initialize());
-        True(backend.WritesEnabled);
-        True(transport.WritesAuthorized);
+        False(backend.IsInitialized);
         Equal(0, transport.WriteAttempts);
         backend.Dispose();
         True(transport.Disposed);
@@ -333,21 +331,11 @@ internal static class Program
         FakeTransport transport = new(profile, selector: cpu.Selector);
         PawnIoF7bsdBackend backend = CreateBackend(F7bsdHost(), transport);
 
-        F7bsdStartupRecovery recovery = backend.Initialize();
-        True(recovery.WritesEnabled);
+        backend.Initialize();
+        True(backend.IsInitialized);
         Equal(0, transport.WriteAttempts);
 
-        Equal((byte)20, backend.SetCpu(20));
-        SequenceEqual(
-            F7bsdProfile.CpuTargetWrites(20, includeSlopes: true),
-            transport.WriteBatches[0]);
-        backend.ResetCpu();
-        SequenceEqual(
-            F7bsdProfile.CpuRestoreWrites(profile, baseline),
-            transport.WriteBatches[1]);
-        SequenceEqual(
-            baseline,
-            transport.ValuesAt(F7bsdProfile.CpuOwnedAddresses));
+        AssertCpuSetReset(backend, transport, profile, baseline, 20);
 
         Equal((byte)20, backend.SetSystem(20));
         SequenceEqual(
@@ -397,22 +385,35 @@ internal static class Program
             F7bscHost("1.09"),
             transport);
 
-        F7bsdStartupRecovery recovery = backend.Initialize();
-        True(recovery.WritesEnabled);
-        True(transport.WritesAuthorized);
-        Equal((byte)18, backend.SetCpu(18));
-        SequenceEqual(
-            F7bsdProfile.CpuTargetWrites(18, includeSlopes: true),
-            transport.WriteBatches[0]);
-        backend.ResetCpu();
-        SequenceEqual(
-            F7bsdProfile.CpuRestoreWrites(profile, baseline),
-            transport.WriteBatches[1]);
+        backend.Initialize();
+        True(backend.IsInitialized);
+        AssertCpuSetReset(backend, transport, profile, baseline, 18);
         Equal(2, transport.WriteAttempts);
 
         backend.Dispose();
         True(transport.Disposed);
         Equal(2, transport.WriteAttempts);
+    }
+
+    private static void AssertCpuSetReset(
+        PawnIoF7bsdBackend backend,
+        FakeTransport transport,
+        F7PlatformProfile profile,
+        byte[] baseline,
+        byte code)
+    {
+        int firstBatch = transport.WriteBatches.Count;
+        Equal(code, backend.SetCpu(code));
+        SequenceEqual(
+            F7bsdProfile.CpuTargetWrites(code, includeSlopes: true),
+            transport.WriteBatches[firstBatch]);
+        backend.ResetCpu();
+        SequenceEqual(
+            F7bsdProfile.CpuRestoreWrites(profile, baseline),
+            transport.WriteBatches[firstBatch + 1]);
+        SequenceEqual(
+            baseline,
+            transport.ValuesAt(F7bsdProfile.CpuOwnedAddresses));
     }
 
     private static void HpbsdSystemEngageAndRelease()
@@ -471,7 +472,7 @@ internal static class Program
         byte[] baseline = cpu.Baseline.ToArray();
         PawnIoF7bsdBackend cpuBackend = CreateBackend(F7bsdHost(), cpuTransport);
         cpuBackend.Initialize();
-        cpuTransport.BeforeWriteValidation[1] = static transport =>
+        cpuTransport.MutateBeforeNextWriteValidation = static transport =>
             transport.MakeCpuRecoverable(7);
 
         Throws<IOException>(() => cpuBackend.SetCpu(20));
@@ -491,7 +492,7 @@ internal static class Program
             F7bsdHost(),
             systemTransport);
         systemBackend.Initialize();
-        systemTransport.BeforeWriteValidation[1] = static transport =>
+        systemTransport.MutateBeforeNextWriteValidation = static transport =>
             transport.CorruptSystemPolicy();
 
         Throws<IOException>(() => systemBackend.SetSystem(20));
@@ -514,7 +515,7 @@ internal static class Program
         byte[] baseline = cpu.Baseline.ToArray();
         transport.MakeCpuRecoverable(20);
         transport.MakeSystemRecoverable(20);
-        transport.FailBeforeWriteAttempts.Add(1);
+        transport.FailNextWrite = true;
         PawnIoF7bsdBackend backend = CreateBackend(F7bsdHost(), transport);
 
         Throws<IOException>(() => backend.Initialize());
@@ -551,14 +552,47 @@ internal static class Program
             transport.ValuesAt(F7bsdProfile.CpuOwnedAddresses));
     }
 
+    private static void FailedDisposeClosesControl()
+    {
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsd");
+        CpuProfileDefinition cpu = profile.CpuProfiles.Single(
+            item => item.Selector == 0xb1);
+        byte[] baseline = cpu.Baseline.ToArray();
+        FakeTransport transport = new(profile, selector: cpu.Selector);
+        PawnIoF7bsdBackend backend = CreateBackend(F7bsdHost(), transport);
+
+        backend.Initialize();
+        Equal((byte)20, backend.SetCpu(20));
+        transport.FailNextWrite = true;
+
+        Throws<AggregateException>(backend.Dispose);
+        False(backend.IsInitialized);
+        False(transport.Disposed);
+        Equal(2, transport.WriteAttempts);
+
+        Throws<InvalidOperationException>(() => backend.ReadTelemetry());
+        Throws<InvalidOperationException>(() => backend.SetCpu(19));
+        Throws<InvalidOperationException>(() => backend.SetSystem(19));
+        Throws<InvalidOperationException>(backend.ResetCpu);
+        Throws<InvalidOperationException>(backend.ResetSystem);
+        Equal(2, transport.WriteAttempts);
+
+        backend.Dispose();
+        False(backend.IsInitialized);
+        True(transport.Disposed);
+        Equal(3, transport.WriteAttempts);
+        SequenceEqual(
+            baseline,
+            transport.ValuesAt(F7bsdProfile.CpuOwnedAddresses));
+    }
+
     private static PawnIoF7bsdBackend CreateBackend(
         HostIdentitySnapshot host,
         FakeTransport transport) => new(
             () => host,
-            (selected, writesEnabled) =>
+            selected =>
             {
                 Equal(transport.Profile.Id, selected.Id);
-                transport.AuthorizeWrites(writesEnabled);
                 return transport;
             });
 
@@ -619,15 +653,15 @@ internal static class Program
             5);
 
     private static HostIdentitySnapshot HpbsdHost(int ecMinor) => new(
-            "EliteMini Series",
-            "1.0",
-            string.Empty,
-            string.Empty,
-            "HPBSD",
-            "1.0",
-            "1.06",
-            0,
-            ecMinor);
+        "EliteMini Series",
+        "1.0",
+        string.Empty,
+        string.Empty,
+        "HPBSD",
+        "1.0",
+        "1.06",
+        0,
+        ecMinor);
 
     private static void True(bool condition)
     {
@@ -681,6 +715,17 @@ internal static class Program
         byte[] Bands,
         byte[] Baseline);
 
+    private sealed record ExpectedProfile(
+        string Name,
+        string Id,
+        byte[] SystemPolicy,
+        byte SystemMaximum,
+        ExpectedCpu[] Cpus);
+
+    private sealed record SupportedHost(
+        string ProfileId,
+        HostIdentitySnapshot Host);
+
     private sealed class FakeTransport : IF7Transport
     {
         private readonly Dictionary<ushort, byte> memory = [];
@@ -707,17 +752,13 @@ internal static class Program
 
         internal F7PlatformProfile Profile { get; }
 
-        internal bool WritesAuthorized { get; private set; }
-
         internal int WriteAttempts { get; private set; }
 
         internal List<EcWrite[]> WriteBatches { get; } = [];
 
-        internal List<ushort[]> ReadBatches { get; } = [];
+        internal Action<FakeTransport>? MutateBeforeNextWriteValidation { get; set; }
 
-        internal Dictionary<int, Action<FakeTransport>> BeforeWriteValidation { get; } = [];
-
-        internal HashSet<int> FailBeforeWriteAttempts { get; } = [];
+        internal bool FailNextWrite { get; set; }
 
         internal bool Disposed { get; private set; }
 
@@ -725,25 +766,28 @@ internal static class Program
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             F7bsdProfile.AssertReadsAllowed(addresses);
-            ReadBatches.Add((ushort[])addresses.Clone());
             return addresses.Select(ByteAt).ToArray();
         }
 
         public void WriteVerified(
             EcExpectation[] before,
             EcWrite[] writes,
-            Action? beforeWrites = null) =>
-            WriteSystem(before, writes, beforeWrites);
+            Action? beforeWrites = null)
+        {
+            F7bsdProfile.AssertWritesAllowed(Profile, writes);
+            Apply(before, writes, beforeWrites);
+        }
 
         public void WriteCpuVerified(
             EcExpectation[] before,
             EcWrite[] writes,
-            ReadOnlySpan<byte> baseline) =>
-            WriteCpu(before, writes, baseline);
+            ReadOnlySpan<byte> baseline)
+        {
+            F7bsdProfile.AssertCpuWritesAllowed(Profile, writes, baseline);
+            Apply(before, writes, null);
+        }
 
         public void Dispose() => Disposed = true;
-
-        internal void AuthorizeWrites(bool enabled) => WritesAuthorized = enabled;
 
         internal void MakeCpuRecoverable(byte code)
         {
@@ -770,41 +814,17 @@ internal static class Program
         internal byte[] ValuesAt(ushort[] addresses) =>
             addresses.Select(ByteAt).ToArray();
 
-        private void WriteCpu(
-            EcExpectation[] before,
-            EcWrite[] writes,
-            ReadOnlySpan<byte> baseline)
-        {
-            int attempt = ++WriteAttempts;
-            EnsureWritesAuthorized();
-            F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
-            F7bsdProfile.AssertCpuWritesAllowed(Profile, writes, baseline);
-            Apply(attempt, before, writes, null);
-        }
-
-        private void WriteSystem(
-            EcExpectation[] before,
-            EcWrite[] writes,
-            Action? beforeWrites)
-        {
-            int attempt = ++WriteAttempts;
-            EnsureWritesAuthorized();
-            F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
-            F7bsdProfile.AssertWritesAllowed(Profile, writes);
-            Apply(attempt, before, writes, beforeWrites);
-        }
-
         private void Apply(
-            int attempt,
             EcExpectation[] before,
             EcWrite[] writes,
             Action? beforeWrites)
         {
+            WriteAttempts++;
             ObjectDisposedException.ThrowIf(Disposed, this);
-            if (BeforeWriteValidation.Remove(attempt, out Action<FakeTransport>? mutate))
-            {
-                mutate(this);
-            }
+            F7bsdProfile.AssertReadsAllowed(before.Select(item => item.Address));
+            Action<FakeTransport>? mutate = MutateBeforeNextWriteValidation;
+            MutateBeforeNextWriteValidation = null;
+            mutate?.Invoke(this);
             foreach (EcExpectation expectation in before)
             {
                 byte actual = ByteAt(expectation.Address);
@@ -815,9 +835,10 @@ internal static class Program
                 }
             }
 
-            if (FailBeforeWriteAttempts.Remove(attempt))
+            if (FailNextWrite)
             {
-                throw new IOException($"Expected fake write failure {attempt}.");
+                FailNextWrite = false;
+                throw new IOException($"Expected fake write failure {WriteAttempts}.");
             }
             beforeWrites?.Invoke();
             EcWrite[] copy = (EcWrite[])writes.Clone();
@@ -837,15 +858,6 @@ internal static class Program
                     throw new IOException(
                         $"Fake verification failed at 0x{write.Address:X4}.");
                 }
-            }
-        }
-
-        private void EnsureWritesAuthorized()
-        {
-            if (!WritesAuthorized)
-            {
-                throw new InvalidOperationException(
-                    "The fake transport rejected a read-only write attempt.");
             }
         }
 

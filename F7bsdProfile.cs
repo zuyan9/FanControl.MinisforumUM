@@ -178,18 +178,11 @@ internal static class F7bsdProfile
     }
 
     internal static EcExpectation[] CpuSnapshotExpectations(
-        ReadOnlySpan<byte> snapshot)
-    {
-        ValidateCpuSnapshotLength(snapshot);
-        EcExpectation[] expectations = new EcExpectation[snapshot.Length];
-        for (int index = 0; index < expectations.Length; index++)
-        {
-            expectations[index] = new EcExpectation(
-                CpuSnapshotAddresses[index],
-                snapshot[index]);
-        }
-        return expectations;
-    }
+        ReadOnlySpan<byte> snapshot) => BuildExpectations(
+            CpuSnapshotAddresses,
+            snapshot,
+            "Unexpected CPU snapshot length.",
+            nameof(snapshot));
 
     internal static void ValidateCpuWritePrecondition(
         F7PlatformProfile platform,
@@ -302,21 +295,11 @@ internal static class F7bsdProfile
     }
 
     internal static EcExpectation[] SystemPolicyExpectations(
-        ReadOnlySpan<byte> policy)
-    {
-        if (policy.Length != SystemPolicyAddresses.Length)
-        {
-            throw new ArgumentException("Unexpected system-policy length.", nameof(policy));
-        }
-        EcExpectation[] expectations = new EcExpectation[policy.Length];
-        for (int index = 0; index < expectations.Length; index++)
-        {
-            expectations[index] = new EcExpectation(
-                SystemPolicyAddresses[index],
-                policy[index]);
-        }
-        return expectations;
-    }
+        ReadOnlySpan<byte> policy) => BuildExpectations(
+            SystemPolicyAddresses,
+            policy,
+            "Unexpected system-policy length.",
+            nameof(policy));
 
     internal static bool PlausibleTemperature(byte value) => value is >= 1 and <= 120;
 
@@ -557,6 +540,25 @@ internal static class F7bsdProfile
         {
             throw new ArgumentOutOfRangeException(parameterName);
         }
+    }
+
+    private static EcExpectation[] BuildExpectations(
+        ReadOnlySpan<ushort> addresses,
+        ReadOnlySpan<byte> values,
+        string lengthMessage,
+        string parameterName)
+    {
+        if (values.Length != addresses.Length)
+        {
+            throw new ArgumentException(lengthMessage, parameterName);
+        }
+
+        EcExpectation[] expectations = new EcExpectation[values.Length];
+        for (int index = 0; index < expectations.Length; index++)
+        {
+            expectations[index] = new EcExpectation(addresses[index], values[index]);
+        }
+        return expectations;
     }
 
     private static void ValidateCpuSnapshotLength(ReadOnlySpan<byte> snapshot)
