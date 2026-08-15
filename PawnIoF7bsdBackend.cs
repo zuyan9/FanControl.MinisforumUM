@@ -2,13 +2,16 @@ namespace FanControl.MinisforumUM780XTX;
 
 internal sealed class PawnIoF7bsdBackend : IDisposable
 {
-    private const int CpuSnapshotAttempts = 4;
+    private const int StableSnapshotAttempts = 4;
     private const int SystemReleaseSteps = 4;
     private const int SystemHandoffPollAttempts = 16;
     private static readonly TimeSpan SystemHandoffPollDelay =
         TimeSpan.FromMilliseconds(100);
 
-    private PawnIoTransport? transport;
+    private readonly Func<HostIdentitySnapshot> hostIdentityReader;
+    private readonly Func<F7PlatformProfile, IF7Transport> transportFactory;
+    private IF7Transport? transport;
+    private F7PlatformProfile? profile;
     private byte[]? cpuBaseline;
     private byte? cpuCode;
     private byte? systemCode;
@@ -17,21 +20,56 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     private bool systemRestorePending;
     private F7bsdStartupRecovery? startupRecovery;
 
+    internal PawnIoF7bsdBackend()
+        : this(
+            HostIdentity.Read,
+            static selected => new PawnIoTransport(selected))
+    {
+    }
+
+    internal PawnIoF7bsdBackend(
+        Func<HostIdentitySnapshot> hostIdentityReader,
+        Func<F7PlatformProfile, IF7Transport> transportFactory)
+    {
+        this.hostIdentityReader = hostIdentityReader ??
+            throw new ArgumentNullException(nameof(hostIdentityReader));
+        this.transportFactory = transportFactory ??
+            throw new ArgumentNullException(nameof(transportFactory));
+    }
+
+    internal bool IsInitialized => startupRecovery.HasValue;
+
+    internal F7PlatformProfile ActiveProfile => profile ??
+        throw new InvalidOperationException("The platform profile is unavailable.");
+
     internal F7bsdStartupRecovery Initialize()
     {
         if (transport is not null)
         {
             return startupRecovery ?? throw new InvalidOperationException(
-                "F7BSD initialization did not complete.");
+                "Minisforum EC initialization did not complete.");
         }
 
-        HostIdentity.AssertSupported();
-        PawnIoTransport active = new();
+        HostIdentitySnapshot host = hostIdentityReader();
+        F7PlatformProfile selected = F7ProfileCatalog.Resolve(host);
+        profile = selected;
+        IF7Transport active = transportFactory(selected);
         transport = active;
 
+        byte[] cpuSnapshot = ReadStable(
+            active,
+            F7bsdProfile.CpuSnapshotAddresses,
+            "CPU fan table");
+        CpuStartupClassification cpuState =
+            F7bsdProfile.ClassifyCpuStartupSnapshot(selected, cpuSnapshot);
+        byte[] systemPolicy = ReadStable(
+            active,
+            F7bsdProfile.SystemPolicyAddresses,
+            "system-fan policy");
+        F7bsdProfile.ValidateSystemPolicy(selected, systemPolicy);
         byte[] systemSnapshot = active.Read(F7bsdProfile.SystemStateAddresses);
         SystemStartupState systemState =
-            F7bsdProfile.ClassifySystemStartupState(systemSnapshot);
+            F7bsdProfile.ClassifySystemStartupState(selected, systemSnapshot);
         if (systemState == SystemStartupState.Unsupported)
         {
             throw new PlatformNotSupportedException(
@@ -39,7 +77,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
                 "recoverable raw-control handoff.");
         }
 
+        bool recoveredCpu = cpuState.State == CpuStartupState.Recoverable;
         bool recoveredSystem = systemState != SystemStartupState.Firmware;
+        cpuBaseline = cpuState.Baseline;
+        cpuRestorePending = recoveredCpu;
         byte? previousSystemTarget = recoveredSystem ? systemSnapshot[2] : null;
         if (recoveredSystem)
         {
@@ -48,25 +89,29 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             ReleaseSystemCore(active);
         }
 
-        byte[] cpuSnapshot = ReadStableCpuSnapshot(active);
-        CpuStartupClassification cpuState =
-            F7bsdProfile.ClassifyCpuStartupSnapshot(cpuSnapshot);
-        cpuBaseline = cpuState.Baseline;
-
-        bool recoveredCpu = cpuState.State == CpuStartupState.Recoverable;
         if (recoveredCpu)
         {
-            cpuRestorePending = true;
             RestoreCpuCore(active);
         }
         else
         {
             F7bsdProfile.ValidateFirmwareCpuSnapshot(
-                cpuSnapshot,
+                selected,
+                ReadStable(
+                    active,
+                    F7bsdProfile.CpuSnapshotAddresses,
+                    "CPU fan table"),
                 ActiveCpuBaseline());
         }
+        F7bsdProfile.ValidateSystemPolicy(
+            selected,
+            ReadStable(
+                active,
+                F7bsdProfile.SystemPolicyAddresses,
+                "system-fan policy"));
 
         F7bsdStartupRecovery result = new(
+            selected.DisplayName,
             cpuState.Selector,
             recoveredCpu,
             recoveredSystem,
@@ -77,7 +122,8 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal F7bsdTelemetry ReadTelemetry()
     {
-        PawnIoTransport active = ActiveTransport();
+        EnsureInitialized();
+        IF7Transport active = ActiveTransport();
         byte[] sample = active.Read(F7bsdProfile.TelemetryAddresses);
         int cpuRpm = ReadStableCounter(
             active,
@@ -92,18 +138,29 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         return new F7bsdTelemetry(cpuRpm, systemRpm, sample[6], sample[7]);
     }
 
-    internal void ResetCpu() => RestoreCpu(ActiveTransport());
+    internal void ResetCpu()
+    {
+        EnsureInitialized();
+        RestoreCpu(ActiveTransport());
+    }
 
-    internal void ResetSystem() => ReleaseSystem(ActiveTransport());
+    internal void ResetSystem()
+    {
+        EnsureInitialized();
+        ReleaseSystem(ActiveTransport());
+    }
 
     public void Dispose()
     {
-        PawnIoTransport? old = transport;
+        IF7Transport? old = transport;
         if (old is null)
         {
             return;
         }
 
+        // Stop public telemetry/control calls before restoration begins. Private
+        // recovery below remains available for retries if cleanup fails.
+        startupRecovery = null;
         List<Exception> failures = [];
         TryRestore(
             systemMayBeOwned || systemRestorePending,
@@ -113,13 +170,13 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             () => RestoreCpu(old));
         if (failures.Count != 0)
         {
-            throw new AggregateException("F7BSD restoration failed.", failures);
+            throw new AggregateException("Minisforum EC restoration failed.", failures);
         }
 
         old.Dispose();
         transport = null;
+        profile = null;
         cpuBaseline = null;
-        startupRecovery = null;
 
         void TryRestore(bool needed, Action restore)
         {
@@ -140,27 +197,34 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal byte SetCpu(byte requestedCode)
     {
+        EnsureInitialized();
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             requestedCode,
             F7bsdProfile.MaximumCode);
-        PawnIoTransport active = ActiveTransport();
+        IF7Transport active = ActiveTransport();
         if (cpuRestorePending)
         {
             throw new InvalidOperationException(
                 "CPU restoration is pending; reset the control or refresh the plugin.");
         }
-        if (cpuCode == requestedCode)
-        {
-            return requestedCode;
-        }
-
         try
         {
+            byte[] snapshot = ReadStable(
+                active,
+                F7bsdProfile.CpuSnapshotAddresses,
+                "CPU fan table");
+            byte[] baseline = ActiveCpuBaseline();
+            F7bsdProfile.ValidateCpuWritePrecondition(
+                ActiveProfile,
+                snapshot,
+                baseline,
+                cpuCode);
             active.WriteCpuVerified(
+                F7bsdProfile.CpuSnapshotExpectations(snapshot),
                 F7bsdProfile.CpuTargetWrites(
                     requestedCode,
                     includeSlopes: !cpuCode.HasValue),
-                ActiveCpuBaseline());
+                baseline);
             cpuCode = requestedCode;
             return requestedCode;
         }
@@ -182,7 +246,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         }
     }
 
-    private void RestoreCpu(PawnIoTransport active)
+    private void RestoreCpu(IF7Transport active)
     {
         if (!cpuCode.HasValue && !cpuRestorePending)
         {
@@ -192,12 +256,15 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         RestoreCpuCore(active);
     }
 
-    private void RestoreCpuCore(PawnIoTransport active)
+    private void RestoreCpuCore(IF7Transport active)
     {
         byte[] baseline = ActiveCpuBaseline();
-        byte[] snapshot = ReadStableCpuSnapshot(active);
+        byte[] snapshot = ReadStable(
+            active,
+            F7bsdProfile.CpuSnapshotAddresses,
+            "CPU fan table");
         CpuStartupClassification classification =
-            F7bsdProfile.ClassifyCpuStartupSnapshot(snapshot);
+            F7bsdProfile.ClassifyCpuStartupSnapshot(ActiveProfile, snapshot);
         EnsureCpuProfile(classification, baseline);
 
         Exception? writeFailure = null;
@@ -207,7 +274,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             {
                 active.WriteCpuVerified(
                     F7bsdProfile.CpuSnapshotExpectations(snapshot),
-                    F7bsdProfile.CpuRestoreWrites(baseline),
+                    F7bsdProfile.CpuRestoreWrites(ActiveProfile, baseline),
                     baseline);
             }
             catch (Exception exception)
@@ -218,8 +285,14 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
         try
         {
-            byte[] verified = ReadStableCpuSnapshot(active);
-            F7bsdProfile.ValidateFirmwareCpuSnapshot(verified, baseline);
+            byte[] verified = ReadStable(
+                active,
+                F7bsdProfile.CpuSnapshotAddresses,
+                "CPU fan table");
+            F7bsdProfile.ValidateFirmwareCpuSnapshot(
+                ActiveProfile,
+                verified,
+                baseline);
         }
         catch (Exception verificationFailure)
         {
@@ -237,39 +310,53 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal byte SetSystem(byte requestedCode)
     {
+        EnsureInitialized();
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             requestedCode,
-            F7bsdProfile.MaximumCode);
-        PawnIoTransport active = ActiveTransport();
+            ActiveProfile.SystemMaximumCode);
+        IF7Transport active = ActiveTransport();
         if (systemRestorePending)
         {
             throw new InvalidOperationException(
                 "System-fan ownership release is pending; reset the control or " +
                 "refresh the plugin.");
         }
-        if (systemMayBeOwned && systemCode == requestedCode)
-        {
-            return requestedCode;
-        }
-
         try
         {
+            byte[] policy = ReadStable(
+                active,
+                F7bsdProfile.SystemPolicyAddresses,
+                "system-fan policy");
+            F7bsdProfile.ValidateSystemPolicy(ActiveProfile, policy);
+            EcExpectation[] policyExpectations =
+                F7bsdProfile.SystemPolicyExpectations(policy);
+            byte? expectedTarget = systemCode;
             if (!systemMayBeOwned)
             {
-                EngageSystem(active);
+                expectedTarget = EngageSystem(active, policyExpectations);
             }
 
+            List<EcExpectation> before =
+            [
+                .. policyExpectations,
+                new EcExpectation(
+                    F7bsdProfile.SystemEffectiveTemperatureAddress,
+                    F7bsdProfile.SystemSentinel),
+                new EcExpectation(
+                    F7bsdProfile.SystemTemperatureOverrideAddress,
+                    F7bsdProfile.SystemSentinel),
+            ];
+            if (expectedTarget.HasValue)
+            {
+                before.Add(new EcExpectation(
+                    F7bsdProfile.SystemTargetAddress,
+                    expectedTarget.Value));
+            }
             active.WriteVerified(
-                [
-                    new EcExpectation(
-                        F7bsdProfile.SystemEffectiveTemperatureAddress,
-                        F7bsdProfile.SystemSentinel),
-                    new EcExpectation(
-                        F7bsdProfile.SystemTemperatureOverrideAddress,
-                        F7bsdProfile.SystemSentinel),
-                ],
+                before.ToArray(),
                 [new EcWrite(F7bsdProfile.SystemTargetAddress, requestedCode)]);
             F7bsdProfile.ValidateOwnedSystemState(
+                ActiveProfile,
                 active.Read(F7bsdProfile.SystemStateAddresses),
                 requestedCode);
             systemCode = requestedCode;
@@ -297,12 +384,18 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         }
     }
 
-    private void EngageSystem(PawnIoTransport active)
+    private byte EngageSystem(
+        IF7Transport active,
+        EcExpectation[] policyExpectations)
     {
-        F7bsdProfile.ValidateFirmwareSystemState(
-            active.Read(F7bsdProfile.SystemStateAddresses));
+        byte[] state = active.Read(F7bsdProfile.SystemStateAddresses);
+        F7bsdProfile.ValidateFirmwareSystemState(ActiveProfile, state);
         active.WriteVerified(
-            [new EcExpectation(F7bsdProfile.SystemTemperatureOverrideAddress, 0)],
+            [
+                .. policyExpectations,
+                .. F7bsdProfile.SystemStateAddresses.Select((address, index) =>
+                    new EcExpectation(address, state[index])),
+            ],
             [new EcWrite(
                 F7bsdProfile.SystemTemperatureOverrideAddress,
                 F7bsdProfile.SystemSentinel)],
@@ -313,9 +406,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             });
         WaitForSystemEffective(active, owned: true);
         systemRestorePending = false;
+        return state[2];
     }
 
-    private void ReleaseSystem(PawnIoTransport active)
+    private void ReleaseSystem(IF7Transport active)
     {
         if (!systemMayBeOwned && !systemRestorePending)
         {
@@ -325,7 +419,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         ReleaseSystemCore(active);
     }
 
-    private void ReleaseSystemCore(PawnIoTransport active)
+    private void ReleaseSystemCore(IF7Transport active)
     {
         Exception? transitionFailure = null;
         (byte Override, byte Target)? unchangedAfterFailure = null;
@@ -349,7 +443,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             unchangedAfterFailure = null;
 
             SystemStartupState classification =
-                F7bsdProfile.ClassifySystemStartupState(state);
+                F7bsdProfile.ClassifySystemStartupState(ActiveProfile, state);
             switch (classification)
             {
                 case SystemStartupState.Firmware:
@@ -378,11 +472,11 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
                             F7bsdProfile.SystemSentinel),
                         new EcExpectation(F7bsdProfile.SystemTargetAddress, state[2]),
                     ];
-                    EcWrite write = state[2] == F7bsdProfile.MaximumCode
+                    EcWrite write = state[2] == ActiveProfile.SystemMaximumCode
                         ? new EcWrite(F7bsdProfile.SystemTemperatureOverrideAddress, 0)
                         : new EcWrite(
                             F7bsdProfile.SystemTargetAddress,
-                            F7bsdProfile.MaximumCode);
+                            ActiveProfile.SystemMaximumCode);
                     try
                     {
                         active.WriteVerified(before, [write]);
@@ -407,11 +501,11 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         throw Combine(transitionFailure, exhausted);
     }
 
-    private static void VerifySystemReleased(PawnIoTransport active)
+    private void VerifySystemReleased(IF7Transport active)
     {
         WaitForSystemEffective(active, owned: false);
         byte[] state = active.Read(F7bsdProfile.SystemStateAddresses);
-        if (F7bsdProfile.ClassifySystemStartupState(state) !=
+        if (F7bsdProfile.ClassifySystemStartupState(ActiveProfile, state) !=
             SystemStartupState.Firmware)
         {
             throw new IOException("Firmware did not resume system-fan ownership.");
@@ -419,7 +513,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     }
 
     private static void WaitForSystemEffective(
-        PawnIoTransport active,
+        IF7Transport active,
         bool owned)
     {
         byte last = 0;
@@ -444,19 +538,22 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
             $"System fan did not {direction}; effective byte ended at 0x{last:X2}.");
     }
 
-    private static byte[] ReadStableCpuSnapshot(PawnIoTransport active)
+    private static byte[] ReadStable(
+        IF7Transport active,
+        ushort[] addresses,
+        string description)
     {
-        byte[] previous = active.Read(F7bsdProfile.CpuSnapshotAddresses);
-        for (int attempt = 1; attempt < CpuSnapshotAttempts; attempt++)
+        byte[] previous = active.Read(addresses);
+        for (int attempt = 1; attempt < StableSnapshotAttempts; attempt++)
         {
-            byte[] current = active.Read(F7bsdProfile.CpuSnapshotAddresses);
+            byte[] current = active.Read(addresses);
             if (current.AsSpan().SequenceEqual(previous))
             {
                 return current;
             }
             previous = current;
         }
-        throw new IOException("The CPU fan table did not produce a stable snapshot.");
+        throw new IOException($"The {description} did not produce a stable snapshot.");
     }
 
     private static void EnsureCpuProfile(
@@ -477,14 +574,23 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
         systemRestorePending = false;
     }
 
-    private PawnIoTransport ActiveTransport() => transport ??
-        throw new InvalidOperationException("The F7BSD backend is not initialized.");
+    private IF7Transport ActiveTransport() => transport ??
+        throw new InvalidOperationException("The Minisforum EC backend is not initialized.");
 
     private byte[] ActiveCpuBaseline() => cpuBaseline ??
         throw new InvalidOperationException("The canonical CPU baseline is unavailable.");
 
+    private void EnsureInitialized()
+    {
+        if (!IsInitialized)
+        {
+            throw new InvalidOperationException(
+                "The Minisforum EC backend did not complete initialization.");
+        }
+    }
+
     private static int ReadStableCounter(
-        PawnIoTransport active,
+        IF7Transport active,
         ReadOnlySpan<byte> initial,
         ushort[] addresses,
         string name)
@@ -509,6 +615,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 }
 
 internal readonly record struct F7bsdStartupRecovery(
+    string ProfileName,
     byte CpuSelector,
     bool CpuRecovered,
     bool SystemRecovered,

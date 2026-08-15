@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>FanControl.MinisforumUM780XTX.Tests</_Parameter1>
+    </AssemblyAttribute>
     <Reference Include="FanControl.Plugins">
       <HintPath>$(FanControlDir)\FanControl.Plugins.dll</HintPath>
       <Private>false</Private>

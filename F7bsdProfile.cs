@@ -21,12 +21,6 @@ internal enum SystemStartupState
 
 internal static class F7bsdProfile
 {
-    internal const string Product = "Venus series";
-    internal const string Board = "F7BSD";
-    internal const string BoardVersion = "1.1";
-    internal const string BiosVersion = "1.06";
-    internal const int EmbeddedControllerMajorVersion = 0;
-    internal const int EmbeddedControllerMinorVersion = 8;
     internal const string IsaMutexName = "Global\\Access_ISABUS.HTP.Method";
     internal const string LpcResourceName =
         "LibreHardwareMonitor.Resources.PawnIo.LpcIO.bin";
@@ -37,11 +31,8 @@ internal static class F7bsdProfile
     internal const ushort SystemEffectiveTemperatureAddress = 0x0889;
     internal const ushort SystemTemperatureOverrideAddress = 0x088b;
 
-    internal static readonly byte[] ExpectedPnpIdentity = [0x55, 0x71, 0x02];
     internal static readonly ushort[] ControllerProfileAddresses =
         [0x2000, 0x2001, 0x2002, 0x200d, 0x180c, 0x1841];
-    internal static readonly byte[] ExpectedControllerProfile =
-        [0x55, 0x71, 0x02, 0x43, 0x14, 0x7f];
 
     // Stable low/high/low tachometer reads followed by raw temperatures.
     internal static readonly ushort[] TelemetryAddresses =
@@ -64,11 +55,16 @@ internal static class F7bsdProfile
 
     private const ushort CpuProfileSelectorAddress = 0x032f;
     private const ushort CpuTemperatureOverrideAddress = 0x088a;
-    private static readonly ushort[] CpuBandAddresses = CpuBaseAddresses
+    internal static readonly ushort[] CpuBandAddresses = CpuBaseAddresses
         .SelectMany(address => new[] { (ushort)(address + 1), (ushort)(address + 2) })
         .ToArray();
-    private static readonly ushort[] CpuCriticalAddresses =
+    internal static readonly ushort[] CpuCriticalAddresses =
         [0x0325, 0x0326, 0x0327, 0x08b7];
+    internal static readonly ushort[] SystemPolicyAddresses =
+    [
+        .. Enumerable.Range(0x0330, 9).Select(address => (ushort)address),
+        .. Enumerable.Range(0x08c0, 3).Select(address => (ushort)address),
+    ];
 
     // These bytes are configuration, not telemetry, so the backend can compare two
     // complete snapshots and use the selected one as a write precondition.
@@ -89,56 +85,20 @@ internal static class F7bsdProfile
     internal static readonly ushort[] SystemEffectiveTemperaturePollAddresses =
         [SystemEffectiveTemperatureAddress];
 
-    private static readonly byte[] StandardCpuBands =
-    [
-        25, 0,
-        45, 25,
-        54, 45,
-        66, 54,
-        76, 66,
-        88, 76,
-        93, 88,
-    ];
-    private static readonly byte[] PerformanceCpuBands =
-    [
-        25, 0,
-        45, 25,
-        54, 45,
-        66, 54,
-        80, 66,
-        88, 80,
-        93, 88,
-    ];
     private static readonly byte[] ExpectedCpuCriticalRow = [51, 100, 93, 0];
-    private static readonly CpuProfile[] CpuProfiles =
-    [
-        new(0x00, StandardCpuBands,
-        [
-            0, 16, 18, 21, 28, 34, 36,
-            0, 10, 33, 58, 60, 16, 200,
-        ]),
-        new(0xb1, StandardCpuBands,
-        [
-            0, 16, 18, 21, 28, 32, 33,
-            0, 10, 33, 58, 60, 16, 200,
-        ]),
-        new(0xb2, PerformanceCpuBands,
-        [
-            0, 18, 21, 28, 36, 42, 46,
-            0, 15, 77, 66, 40, 50, 100,
-        ]),
-    ];
 
     private static readonly HashSet<ushort> ReadAllowlist =
     [
         .. ControllerProfileAddresses,
         .. TelemetryAddresses,
         .. CpuSnapshotAddresses,
+        .. SystemPolicyAddresses,
         .. SystemStateAddresses,
     ];
 
-    internal static byte ToCode(float percentage)
+    internal static byte ToCode(float percentage, byte maximumCode)
     {
+        AssertCode(0, maximumCode, nameof(maximumCode));
         if (!float.IsFinite(percentage) || percentage < 0 || percentage > 100)
         {
             throw new ArgumentOutOfRangeException(
@@ -147,22 +107,24 @@ internal static class F7bsdProfile
         }
 
         return (byte)Math.Round(
-            percentage * MaximumCode / 100d,
+            percentage * maximumCode / 100d,
             MidpointRounding.AwayFromZero);
     }
 
-    internal static float ToPercentage(byte code)
+    internal static float ToPercentage(byte code, byte maximumCode)
     {
-        AssertCode(code, nameof(code));
-        return code * 100f / MaximumCode;
+        AssertCode(code, maximumCode, nameof(code));
+        return code * 100f / maximumCode;
     }
 
     internal static CpuStartupClassification ClassifyCpuStartupSnapshot(
+        F7PlatformProfile platform,
         ReadOnlySpan<byte> snapshot)
     {
+        ArgumentNullException.ThrowIfNull(platform);
         ValidateCpuSnapshotLength(snapshot);
 
-        CpuProfile profile = ProfileFor(snapshot[0]);
+        CpuProfileDefinition profile = ProfileFor(platform, snapshot[0]);
         int bandsOffset = 2;
         int criticalOffset = bandsOffset + CpuBandAddresses.Length;
         int mutableOffset = criticalOffset + CpuCriticalAddresses.Length;
@@ -196,16 +158,17 @@ internal static class F7bsdProfile
         return new CpuStartupClassification(
             state,
             profile.Selector,
-            (byte[])profile.Baseline.Clone());
+            profile.Baseline.ToArray());
     }
 
     internal static void ValidateFirmwareCpuSnapshot(
+        F7PlatformProfile platform,
         ReadOnlySpan<byte> snapshot,
         ReadOnlySpan<byte> baseline)
     {
-        ValidateCanonicalCpuBaseline(baseline);
+        ValidateCanonicalCpuBaseline(platform, baseline);
         CpuStartupClassification classification =
-            ClassifyCpuStartupSnapshot(snapshot);
+            ClassifyCpuStartupSnapshot(platform, snapshot);
         if (classification.State != CpuStartupState.Firmware ||
             !classification.Baseline.AsSpan().SequenceEqual(baseline))
         {
@@ -215,27 +178,58 @@ internal static class F7bsdProfile
     }
 
     internal static EcExpectation[] CpuSnapshotExpectations(
-        ReadOnlySpan<byte> snapshot)
+        ReadOnlySpan<byte> snapshot) => BuildExpectations(
+            CpuSnapshotAddresses,
+            snapshot,
+            "Unexpected CPU snapshot length.",
+            nameof(snapshot));
+
+    internal static void ValidateCpuWritePrecondition(
+        F7PlatformProfile platform,
+        ReadOnlySpan<byte> snapshot,
+        ReadOnlySpan<byte> baseline,
+        byte? activeCode)
     {
-        ValidateCpuSnapshotLength(snapshot);
-        EcExpectation[] expectations = new EcExpectation[snapshot.Length];
-        for (int index = 0; index < expectations.Length; index++)
+        CpuStartupClassification classification =
+            ClassifyCpuStartupSnapshot(platform, snapshot);
+        if (!classification.Baseline.AsSpan().SequenceEqual(baseline))
         {
-            expectations[index] = new EcExpectation(
-                CpuSnapshotAddresses[index],
-                snapshot[index]);
+            throw new IOException(
+                "The BIOS-selected CPU fan profile changed while control was active.");
         }
-        return expectations;
+
+        if (!activeCode.HasValue)
+        {
+            if (classification.State != CpuStartupState.Firmware)
+            {
+                throw new IOException(
+                    "CPU control can start only from the canonical firmware table.");
+            }
+            return;
+        }
+
+        AssertCode(activeCode.Value, MaximumCode, nameof(activeCode));
+        int mutableOffset = 2 + CpuBandAddresses.Length + CpuCriticalAddresses.Length;
+        ReadOnlySpan<byte> mutable = snapshot[mutableOffset..];
+        ReadOnlySpan<byte> bases = mutable[..CpuBaseAddresses.Length];
+        ReadOnlySpan<byte> slopes = mutable[CpuBaseAddresses.Length..];
+        if (bases.ContainsAnyExcept(activeCode.Value) || slopes.ContainsAnyExcept((byte)0))
+        {
+            throw new IOException(
+                "The live CPU table is not the exact state last written by this plugin.");
+        }
     }
 
     internal static SystemStartupState ClassifySystemStartupState(
+        F7PlatformProfile platform,
         ReadOnlySpan<byte> state)
     {
+        ArgumentNullException.ThrowIfNull(platform);
         ValidateSystemStateLength(state);
         byte effective = state[0];
         byte temperatureOverride = state[1];
         byte target = state[2];
-        if (target > MaximumCode)
+        if (target > platform.SystemMaximumCode)
         {
             return SystemStartupState.Unsupported;
         }
@@ -255,9 +249,11 @@ internal static class F7bsdProfile
         return SystemStartupState.Unsupported;
     }
 
-    internal static void ValidateFirmwareSystemState(ReadOnlySpan<byte> state)
+    internal static void ValidateFirmwareSystemState(
+        F7PlatformProfile platform,
+        ReadOnlySpan<byte> state)
     {
-        SystemStartupState classification = ClassifySystemStartupState(state);
+        SystemStartupState classification = ClassifySystemStartupState(platform, state);
         if (classification != SystemStartupState.Firmware)
         {
             throw new PlatformNotSupportedException(
@@ -266,6 +262,7 @@ internal static class F7bsdProfile
     }
 
     internal static void ValidateOwnedSystemState(
+        F7PlatformProfile platform,
         ReadOnlySpan<byte> state,
         byte? expectedTarget = null)
     {
@@ -274,18 +271,41 @@ internal static class F7bsdProfile
         {
             throw new IOException("System fixed-target ownership is not active.");
         }
-        if (state[2] > MaximumCode ||
+        if (state[2] > platform.SystemMaximumCode ||
             (expectedTarget.HasValue && state[2] != expectedTarget.Value))
         {
             throw new IOException("The system fan target did not match its request.");
         }
     }
 
+    internal static void ValidateSystemPolicy(
+        F7PlatformProfile platform,
+        ReadOnlySpan<byte> policy)
+    {
+        ArgumentNullException.ThrowIfNull(platform);
+        if (policy.Length != SystemPolicyAddresses.Length)
+        {
+            throw new ArgumentException("Unexpected system-policy length.", nameof(policy));
+        }
+        if (!policy.SequenceEqual(platform.ExpectedSystemTable))
+        {
+            throw new PlatformNotSupportedException(
+                $"The live system-fan policy does not match {platform.DisplayName}.");
+        }
+    }
+
+    internal static EcExpectation[] SystemPolicyExpectations(
+        ReadOnlySpan<byte> policy) => BuildExpectations(
+            SystemPolicyAddresses,
+            policy,
+            "Unexpected system-policy length.",
+            nameof(policy));
+
     internal static bool PlausibleTemperature(byte value) => value is >= 1 and <= 120;
 
     internal static EcWrite[] CpuTargetWrites(byte code, bool includeSlopes)
     {
-        AssertCode(code, nameof(code));
+        AssertCode(code, MaximumCode, nameof(code));
         IEnumerable<EcWrite> writes = CpuBaseAddresses.Select(
             address => new EcWrite(address, code));
         if (includeSlopes)
@@ -296,9 +316,11 @@ internal static class F7bsdProfile
         return writes.ToArray();
     }
 
-    internal static EcWrite[] CpuRestoreWrites(ReadOnlySpan<byte> baseline)
+    internal static EcWrite[] CpuRestoreWrites(
+        F7PlatformProfile platform,
+        ReadOnlySpan<byte> baseline)
     {
-        ValidateCanonicalCpuBaseline(baseline);
+        ValidateCanonicalCpuBaseline(platform, baseline);
 
         byte[] canonical = baseline.ToArray();
         return CpuSlopeAddresses.Select(address => new EcWrite(address, 0))
@@ -321,12 +343,15 @@ internal static class F7bsdProfile
         }
     }
 
-    internal static void AssertWritesAllowed(IEnumerable<EcWrite> writes)
+    internal static void AssertWritesAllowed(
+        F7PlatformProfile platform,
+        IEnumerable<EcWrite> writes)
     {
         foreach (EcWrite write in writes)
         {
             bool allowed =
-                (write.Address == SystemTargetAddress && write.Value <= MaximumCode) ||
+                (write.Address == SystemTargetAddress &&
+                    write.Value <= platform.SystemMaximumCode) ||
                 (write.Address == SystemTemperatureOverrideAddress &&
                     write.Value is 0 or SystemSentinel);
             if (!allowed)
@@ -338,10 +363,11 @@ internal static class F7bsdProfile
     }
 
     internal static void AssertCpuWritesAllowed(
+        F7PlatformProfile platform,
         IEnumerable<EcWrite> writes,
         ReadOnlySpan<byte> baseline)
     {
-        ValidateCanonicalCpuBaseline(baseline);
+        ValidateCanonicalCpuBaseline(platform, baseline);
         foreach (EcWrite write in writes)
         {
             int slopeIndex = Array.IndexOf(CpuSlopeAddresses, write.Address);
@@ -479,16 +505,20 @@ internal static class F7bsdProfile
         return false;
     }
 
-    private static CpuProfile ProfileFor(byte selector) =>
-        CpuProfiles.FirstOrDefault(profile => profile.Selector == selector) ??
+    private static CpuProfileDefinition ProfileFor(
+        F7PlatformProfile platform,
+        byte selector) =>
+        platform.CpuProfiles.FirstOrDefault(profile => profile.Selector == selector) ??
         throw new PlatformNotSupportedException(
-            $"Unknown CPU profile selector 0x{selector:X2}.");
+            $"Unknown {platform.DisplayName} CPU profile selector 0x{selector:X2}.");
 
-    private static void ValidateCanonicalCpuBaseline(ReadOnlySpan<byte> baseline)
+    private static void ValidateCanonicalCpuBaseline(
+        F7PlatformProfile platform,
+        ReadOnlySpan<byte> baseline)
     {
         if (baseline.Length == CpuOwnedAddresses.Length)
         {
-            foreach (CpuProfile profile in CpuProfiles)
+            foreach (CpuProfileDefinition profile in platform.CpuProfiles)
             {
                 if (baseline.SequenceEqual(profile.Baseline))
                 {
@@ -497,16 +527,38 @@ internal static class F7bsdProfile
             }
         }
         throw new ArgumentException(
-            "CPU baseline is not a canonical F7BSD firmware table.",
+            $"CPU baseline is not a canonical {platform.DisplayName} firmware table.",
             nameof(baseline));
     }
 
-    private static void AssertCode(byte code, string parameterName)
+    private static void AssertCode(
+        byte code,
+        byte maximumCode,
+        string parameterName)
     {
-        if (code > MaximumCode)
+        if (maximumCode is 0 or > MaximumCode || code > maximumCode)
         {
             throw new ArgumentOutOfRangeException(parameterName);
         }
+    }
+
+    private static EcExpectation[] BuildExpectations(
+        ReadOnlySpan<ushort> addresses,
+        ReadOnlySpan<byte> values,
+        string lengthMessage,
+        string parameterName)
+    {
+        if (values.Length != addresses.Length)
+        {
+            throw new ArgumentException(lengthMessage, parameterName);
+        }
+
+        EcExpectation[] expectations = new EcExpectation[values.Length];
+        for (int index = 0; index < expectations.Length; index++)
+        {
+            expectations[index] = new EcExpectation(addresses[index], values[index]);
+        }
+        return expectations;
     }
 
     private static void ValidateCpuSnapshotLength(ReadOnlySpan<byte> snapshot)
@@ -524,6 +576,4 @@ internal static class F7bsdProfile
             throw new ArgumentException("Unexpected system state length.", nameof(state));
         }
     }
-
-    private sealed record CpuProfile(byte Selector, byte[] Bands, byte[] Baseline);
 }

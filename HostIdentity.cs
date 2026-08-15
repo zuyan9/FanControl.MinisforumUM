@@ -7,44 +7,59 @@ internal static class HostIdentity
     private const string BiosKey =
         @"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS";
 
-    internal static void AssertSupported()
-    {
-        string product = ReadString("SystemProductName");
-        string board = ReadString("BaseBoardProduct");
-        string boardVersion = ReadString("BaseBoardVersion");
-        string biosVersion = ReadString("BIOSVersion");
-        int ecMajor = ReadInteger("ECFirmwareMajorRelease");
-        int ecMinor = ReadInteger("ECFirmwareMinorRelease");
+    internal static HostIdentitySnapshot Read() => new(
+        ReadRequiredString("SystemProductName"),
+        ReadOptionalString("SystemVersion"),
+        ReadOptionalString("SystemSKU"),
+        ReadOptionalString("SystemFamily"),
+        ReadRequiredString("BaseBoardProduct"),
+        ReadRequiredString("BaseBoardVersion"),
+        ReadRequiredString("BIOSVersion"),
+        ReadRequiredByte("ECFirmwareMajorRelease"),
+        ReadRequiredByte("ECFirmwareMinorRelease"));
 
-        if (!string.Equals(product, F7bsdProfile.Product, StringComparison.Ordinal) ||
-            !string.Equals(board, F7bsdProfile.Board, StringComparison.Ordinal) ||
-            !string.Equals(
-                boardVersion,
-                F7bsdProfile.BoardVersion,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                biosVersion,
-                F7bsdProfile.BiosVersion,
-                StringComparison.Ordinal) ||
-            ecMajor != F7bsdProfile.EmbeddedControllerMajorVersion ||
-            ecMinor != F7bsdProfile.EmbeddedControllerMinorVersion)
-        {
-            throw new PlatformNotSupportedException(
-                $"Expected {F7bsdProfile.Product}/{F7bsdProfile.Board} revision " +
-                $"{F7bsdProfile.BoardVersion}, BIOS {F7bsdProfile.BiosVersion}, EC " +
-                $"{F7bsdProfile.EmbeddedControllerMajorVersion}." +
-                $"{F7bsdProfile.EmbeddedControllerMinorVersion}; found " +
-                $"{product}/{board} revision {boardVersion}, BIOS {biosVersion}, " +
-                $"EC {ecMajor}.{ecMinor}.");
-        }
-    }
-
-    private static string ReadString(string name) => Convert.ToString(
+    private static string ReadOptionalString(string name) => Convert.ToString(
         Registry.GetValue(BiosKey, name, null))?.Trim() ?? string.Empty;
 
-    private static int ReadInteger(string name)
+    private static string ReadRequiredString(string name)
     {
         object? value = Registry.GetValue(BiosKey, name, null);
-        return value is null ? -1 : Convert.ToInt32(value);
+        string text = Convert.ToString(value)?.Trim() ?? string.Empty;
+        if (text.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Required BIOS registry value {name} is missing or empty.");
+        }
+        return text;
+    }
+
+    private static int ReadRequiredByte(string name)
+    {
+        object? value = Registry.GetValue(BiosKey, name, null);
+        if (value is null)
+        {
+            throw new InvalidOperationException(
+                $"Required BIOS registry value {name} is missing.");
+        }
+
+        int result;
+        try
+        {
+            result = Convert.ToInt32(value);
+        }
+        catch (Exception exception) when (
+            exception is FormatException or InvalidCastException or OverflowException)
+        {
+            throw new InvalidOperationException(
+                $"BIOS registry value {name} is not an integer.",
+                exception);
+        }
+
+        if (result is < byte.MinValue or > byte.MaxValue)
+        {
+            throw new InvalidOperationException(
+                $"BIOS registry value {name} is outside the byte range: {result}.");
+        }
+        return result;
     }
 }

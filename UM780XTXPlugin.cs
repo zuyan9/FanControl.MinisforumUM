@@ -72,7 +72,7 @@ public sealed class UM780XTXPlugin : IPlugin2
                 catch (Exception cleanup)
                 {
                     throw new AggregateException(
-                        "UM780 XTX initialization failed and verified recovery " +
+                        "Minisforum EC initialization failed and verified recovery " +
                         "remains pending.",
                         failure,
                         cleanup);
@@ -87,7 +87,10 @@ public sealed class UM780XTXPlugin : IPlugin2
     {
         container.FanSensors.AddRange([cpuFan, systemFan]);
         container.TempSensors.AddRange([cpuTemperature, systemTemperature]);
-        container.ControlSensors.AddRange([cpuControl, systemControl]);
+        if (backend?.IsInitialized == true)
+        {
+            container.ControlSensors.AddRange([cpuControl, systemControl]);
+        }
     }
 
     public void Update()
@@ -104,7 +107,7 @@ public sealed class UM780XTXPlugin : IPlugin2
             catch (Exception exception)
             {
                 ClearTelemetry();
-                Log($"UM780 XTX telemetry read failed: {exception.Message}");
+                Log($"Minisforum EC telemetry read failed: {exception.Message}");
             }
         }
     }
@@ -122,7 +125,7 @@ public sealed class UM780XTXPlugin : IPlugin2
                 }
                 catch (Exception exception)
                 {
-                    Log($"UM780 XTX restoration remains pending: {exception.Message}");
+                    Log($"Minisforum EC restoration remains pending: {exception.Message}");
                     return;
                 }
             }
@@ -133,22 +136,27 @@ public sealed class UM780XTXPlugin : IPlugin2
         }
     }
 
-    private byte SetCpu(float percentage) => Set(
+    private float SetCpu(float percentage) => Set(
         percentage,
+        static _ => F7bsdProfile.MaximumCode,
         static (active, code) => active.SetCpu(code));
 
-    private byte SetSystem(float percentage) => Set(
+    private float SetSystem(float percentage) => Set(
         percentage,
+        static active => active.ActiveProfile.SystemMaximumCode,
         static (active, code) => active.SetSystem(code));
 
-    private byte Set(
+    private float Set(
         float percentage,
+        Func<PawnIoF7bsdBackend, byte> maximumCode,
         Func<PawnIoF7bsdBackend, byte, byte> set)
     {
         lock (lifecycleSync)
         {
-            byte code = F7bsdProfile.ToCode(percentage);
-            return set(ActiveBackend(), code);
+            PawnIoF7bsdBackend active = ActiveBackend();
+            byte maximum = maximumCode(active);
+            byte code = F7bsdProfile.ToCode(percentage, maximum);
+            return F7bsdProfile.ToPercentage(set(active, code), maximum);
         }
     }
 
@@ -167,8 +175,17 @@ public sealed class UM780XTXPlugin : IPlugin2
         }
     }
 
-    private PawnIoF7bsdBackend ActiveBackend() => backend ??
-        throw new InvalidOperationException("The F7BSD backend is unavailable.");
+    private PawnIoF7bsdBackend ActiveBackend()
+    {
+        PawnIoF7bsdBackend active = backend ??
+            throw new InvalidOperationException("The Minisforum EC backend is unavailable.");
+        if (!active.IsInitialized)
+        {
+            throw new InvalidOperationException(
+                "The Minisforum EC backend did not complete initialization.");
+        }
+        return active;
+    }
 
     private void Apply(F7bsdTelemetry telemetry)
     {
@@ -219,7 +236,8 @@ public sealed class UM780XTXPlugin : IPlugin2
         string detail = recovered.Count == 0
             ? "no startup recovery needed"
             : "startup recovery: " + string.Join(", ", recovered);
-        return $"Minisforum UM780 XTX initialized ({profile}; {detail}).";
+        return $"Minisforum {recovery.ProfileName} initialized " +
+            $"({profile}; controls enabled; {detail}).";
     }
 
     private sealed class Sensor(string id, string name) : IPluginSensor
@@ -237,7 +255,7 @@ public sealed class UM780XTXPlugin : IPlugin2
         string id,
         string name,
         string pairedFanSensorId,
-        Func<float, byte> set,
+        Func<float, float> set,
         Action reset) : IPluginControlSensor2
     {
         public string Id { get; } = id;
@@ -250,7 +268,7 @@ public sealed class UM780XTXPlugin : IPlugin2
 
         public void Set(float value)
         {
-            Value = F7bsdProfile.ToPercentage(set(value));
+            Value = set(value);
         }
 
         public void Reset()
