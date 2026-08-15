@@ -61,7 +61,7 @@ controls normally after all profile checks pass; no experimental environment
 variables or diagnostic tokens are required. Reads still change Super-I/O and
 EC address latches, so a mismatch is rejected as soon as it can be detected.
 
-It targets Windows x64, .NET 10, Fan Control V272, and PawnIO API 2.0.
+It targets Windows x64, .NET 10, Fan Control V273, and PawnIO API 2.0.
 
 ## Sensors and controls
 
