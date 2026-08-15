@@ -92,7 +92,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet run `
-              --project .\tests\FanControl.MinisforumUM780XTX.Tests.csproj `
+              --project .\tests\FanControl.MinisforumUMSeries.Tests.csproj `
               --configuration Release `
               "-p:FanControlDir=$env:FANCONTROL_DIR" `
               "-p:Version=$env:PLUGIN_VERSION" `
@@ -102,7 +102,7 @@ jobs:
         shell: pwsh
         run: |
           $plugin = Join-Path $env:GITHUB_WORKSPACE `
-              "bin\Release\net10.0-windows\FanControl.MinisforumUM780XTX.dll"
+              "bin\Release\net10.0-windows\FanControl.MinisforumUMSeries.dll"
           if (-not (Test-Path -LiteralPath $plugin)) {
               throw "Built plugin DLL was not found: $plugin"
           }
@@ -128,8 +128,8 @@ jobs:
         run: |
           $assetDir = Join-Path $env:RUNNER_TEMP "release-assets"
           $sourceDll = Join-Path $env:GITHUB_WORKSPACE `
-              "bin\Release\net10.0-windows\FanControl.MinisforumUM780XTX.dll"
-          $archive = Join-Path $assetDir "FanControl.MinisforumUM780XTX.zip"
+              "bin\Release\net10.0-windows\FanControl.MinisforumUMSeries.dll"
+          $archive = Join-Path $assetDir "FanControl.MinisforumUMSeries.zip"
 
           New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
           Compress-Archive -LiteralPath $sourceDll -DestinationPath $archive -Force
@@ -138,7 +138,7 @@ jobs:
           $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
           try {
               if ($zip.Entries.Count -ne 1 -or
-                  $zip.Entries[0].FullName -ne "FanControl.MinisforumUM780XTX.dll") {
+                  $zip.Entries[0].FullName -ne "FanControl.MinisforumUMSeries.dll") {
                   throw "Plugin archive must contain exactly one root-level DLL."
               }
           }
@@ -149,8 +149,8 @@ jobs:
       - name: Upload plugin artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: FanControl.MinisforumUM780XTX-${{ steps.version.outputs.version }}
-          path: ${{ runner.temp }}/release-assets/FanControl.MinisforumUM780XTX.zip
+          name: FanControl.MinisforumUMSeries-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/release-assets/FanControl.MinisforumUMSeries.zip
           if-no-files-found: error
 
   release:
@@ -165,7 +165,7 @@ jobs:
       - name: Download plugin artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: FanControl.MinisforumUM780XTX-${{ needs.build.outputs.version }}
+          name: FanControl.MinisforumUMSeries-${{ needs.build.outputs.version }}
           path: release-assets
 
       - name: Create GitHub release
@@ -195,7 +195,7 @@ jobs:
           }
 
           gh release create $releaseTag `
-              .\release-assets\FanControl.MinisforumUM780XTX.zip `
+              .\release-assets\FanControl.MinisforumUMSeries.zip `
               --repo $env:GH_REPO `
               --target $env:RELEASE_TARGET `
               --title $releaseTag `
