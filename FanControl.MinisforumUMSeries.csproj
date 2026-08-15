@@ -2,6 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>FanControl.MinisforumUMSeries</AssemblyName>
+    <RootNamespace>FanControl.MinisforumUMSeries</RootNamespace>
     <Version>0.2.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Nullable>enable</Nullable>
@@ -13,7 +15,7 @@
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
-      <_Parameter1>FanControl.MinisforumUM780XTX.Tests</_Parameter1>
+      <_Parameter1>FanControl.MinisforumUMSeries.Tests</_Parameter1>
     </AssemblyAttribute>
     <Reference Include="FanControl.Plugins">
       <HintPath>$(FanControlDir)\FanControl.Plugins.dll</HintPath>

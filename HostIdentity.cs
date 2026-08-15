@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace FanControl.MinisforumUM780XTX;
+namespace FanControl.MinisforumUMSeries;
 
 internal static class HostIdentity
 {

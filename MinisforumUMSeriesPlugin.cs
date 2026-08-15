@@ -1,9 +1,9 @@
 using FanControl.Plugins;
 using System.Runtime.ExceptionServices;
 
-namespace FanControl.MinisforumUM780XTX;
+namespace FanControl.MinisforumUMSeries;
 
-public sealed class UM780XTXPlugin : IPlugin2
+public sealed class MinisforumUMSeriesPlugin : IPlugin2
 {
     private readonly object lifecycleSync = new();
     private readonly IPluginLogger? logger;
@@ -17,12 +17,12 @@ public sealed class UM780XTXPlugin : IPlugin2
     private readonly ControlSensor systemControl;
     private PawnIoF7bsdBackend? backend;
 
-    public UM780XTXPlugin()
+    public MinisforumUMSeriesPlugin()
         : this(null)
     {
     }
 
-    public UM780XTXPlugin(IPluginLogger? logger)
+    public MinisforumUMSeriesPlugin(IPluginLogger? logger)
     {
         this.logger = logger;
         cpuControl = new ControlSensor(
@@ -39,7 +39,7 @@ public sealed class UM780XTXPlugin : IPlugin2
             ResetSystem);
     }
 
-    public string Name => "Minisforum UM780 XTX";
+    public string Name => "Minisforum UM Series";
 
     public void Initialize()
     {

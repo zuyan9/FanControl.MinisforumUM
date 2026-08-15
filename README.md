@@ -1,16 +1,13 @@
-# FanControl.MinisforumUM780XTX
+# FanControl.MinisforumUM
 
 A hardware-specific [Fan Control](https://github.com/Rem0o/FanControl.Releases)
-plugin for selected Minisforum machines with closely related F7-series embedded
-controller firmware. It exposes the EC's CPU and system fan RPM and raw
+plugin for selected Minisforum UM-series machines with closely related F7-series
+embedded controller firmware. It exposes the EC's CPU and system fan RPM and raw
 temperatures, plus CPU and system fan controls, on every compiled profile listed
 below.
 
-The assembly and Fan Control display name retain `UM780XTX` for compatibility
-with existing installations and sensor bindings.
-
-<img width="400" alt="image" src="https://github.com/user-attachments/assets/6715b427-6425-4321-a3f6-5a8bae6a38e7" />
-<img width="350" alt="image" src="https://github.com/user-attachments/assets/33ade8d4-c7ec-4bf6-839c-daf673d00b4e" />
+The plugin assembly is `FanControl.MinisforumUMSeries.dll`, and it appears in
+Fan Control as **Minisforum UM Series**.
 
 ## Compatibility
 
@@ -104,7 +101,7 @@ firmware.
 ## Install
 
 Install Fan Control with PawnIO enabled, download or build
-`FanControl.MinisforumUM780XTX.dll`, then select it under
+`FanControl.MinisforumUMSeries.dll`, then select it under
 **Settings > Plugins > Install plugin...**. Do not run another EC or fan-control
 utility at the same time.
 
@@ -114,21 +111,28 @@ initial use on every other listed machine should be supervised: confirm
 temperatures, tachometers, physical fan mapping, cleanup, and recovery before
 depending on the plugin for cooling.
 
-The short sensor and control IDs are intentionally incompatible with earlier
-experimental releases. Recreate existing Fan Control bindings after upgrading.
+### Upgrading to v0.2
+
+The renamed plugin is intentionally not installed alongside the old assembly.
+Never install both DLLs because both plugins could access the same EC.
+
+1. Exit Fan Control normally and let the plugin restore firmware control.
+2. Delete `FanControl.MinisforumUM780XTX.dll` from Fan Control's plugin folder.
+3. Start Fan Control and install `FanControl.MinisforumUMSeries.dll`.
+4. Recreate affected curves, mixes, and other sensor or control bindings.
 
 ## Build
 
 Install the .NET 10 SDK and Fan Control, then run:
 
 ```powershell
-dotnet build -c Release
+dotnet build .\FanControl.MinisforumUMSeries.csproj -c Release
 ```
 
 For a non-default Fan Control location or a versioned build:
 
 ```powershell
-dotnet build -c Release `
+dotnet build .\FanControl.MinisforumUMSeries.csproj -c Release `
   "-p:FanControlDir=C:\path\to\FanControl" `
   -p:Version=0.2.0
 ```
@@ -137,7 +141,7 @@ Run the hardware-free profile, guard, and recovery tests with:
 
 ```powershell
 dotnet run `
-  --project .\tests\FanControl.MinisforumUM780XTX.Tests.csproj `
+  --project .\tests\FanControl.MinisforumUMSeries.Tests.csproj `
   -c Release `
   "-p:FanControlDir=C:\path\to\FanControl"
 ```

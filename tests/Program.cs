@@ -1,6 +1,6 @@
-using FanControl.MinisforumUM780XTX;
+using FanControl.MinisforumUMSeries;
 
-namespace FanControl.MinisforumUM780XTX.Tests;
+namespace FanControl.MinisforumUMSeries.Tests;
 
 internal static class Program
 {
@@ -115,6 +115,10 @@ internal static class Program
             ("host profile resolution", HostProfileResolution),
             ("host mismatch rejection", HostMismatchRejection),
         ];
+        if (OperatingSystem.IsWindows())
+        {
+            tests.Insert(0, ("plugin identity", PluginIdentity));
+        }
         tests.AddRange(ExpectedProfiles.Select(expected =>
             ($"{expected.Name} canonical tables",
                 (Action)(() => AssertCanonicalProfile(expected)))));
@@ -149,6 +153,13 @@ internal static class Program
 
         Console.WriteLine($"{tests.Count - failures}/{tests.Count} tests passed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void PluginIdentity()
+    {
+        MinisforumUMSeriesPlugin plugin = new();
+        Equal("Minisforum UM Series", plugin.Name);
+        plugin.Close();
     }
 
     private static void HostProfileResolution()

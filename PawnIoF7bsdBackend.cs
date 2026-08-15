@@ -1,4 +1,4 @@
-namespace FanControl.MinisforumUM780XTX;
+namespace FanControl.MinisforumUMSeries;
 
 internal sealed class PawnIoF7bsdBackend : IDisposable
 {

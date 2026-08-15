@@ -1,4 +1,4 @@
-namespace FanControl.MinisforumUM780XTX;
+namespace FanControl.MinisforumUMSeries;
 
 internal readonly record struct EcVersion(int Major, int Minor);
 
