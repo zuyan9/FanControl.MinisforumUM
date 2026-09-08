@@ -66,13 +66,13 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Download verified Fan Control V273 references
+      - name: Download verified Fan Control V275 references
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP "FanControl_273_net_10_0.zip"
-          $extractDir = Join-Path $env:RUNNER_TEMP "FanControl_273_net_10_0"
-          $uri = "https://github.com/Rem0o/FanControl.Releases/releases/download/V273/FanControl_273_net_10_0.zip"
-          $expectedHash = "b3c4a56befd876cc25855646f19fbd0daa01ad8fe1727276cd9e742d94327fc0"
+          $archive = Join-Path $env:RUNNER_TEMP "FanControl_275_net_10_0.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "FanControl_275_net_10_0"
+          $uri = "https://github.com/Rem0o/FanControl.Releases/releases/download/V275/FanControl_275_net_10_0.zip"
+          $expectedHash = "369445d877944e0469b1ae323b09e256672f31fa9969d8787ebf194d5ac7c030"
 
           Invoke-WebRequest -Uri $uri -OutFile $archive
           $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

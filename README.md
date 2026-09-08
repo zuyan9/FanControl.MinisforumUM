@@ -4,8 +4,6 @@ A [Fan Control](https://github.com/Rem0o/FanControl.Releases) plugin for
 selected Minisforum UM-series computers. It provides CPU and system fan speeds,
 raw EC temperatures, and independent CPU and system fan controls.
 
-[Download the latest release](https://github.com/zuyan9/FanControl.MinisforumUM/releases/latest/download/FanControl.MinisforumUMSeries.zip)
-
 > [!WARNING]
 > Only some models have been live write-tested. Support for other listed
 > models is based on firmware analysis and public hardware data.
@@ -23,17 +21,14 @@ raw EC temperatures, and independent CPU and system fan controls.
 | UM880 Plus | BIOS `1.01`, EC `0.5` | Live write-tested |
 | UM880 Pro, UM890 Pro | BIOS `1.06`, EC `0.1` or `0.2` | Firmware-derived |
 
-Model name alone is not sufficient. The plugin first checks machine identity,
-then verifies the controller signature, firmware tables, and current state
-before exposing controls. It refuses to load on a mismatch. All other systems
-are unsupported.
+ All other systems are unsupported. The plugin refuses to load on a mismatch.
 
 ## Install
 
-1. Install the .NET 10 build of Fan Control V273 with PawnIO enabled.
-2. Download and extract `FanControl.MinisforumUMSeries.zip` from the link above.
+1. Install the .NET 10 build of Fan Control V275 with PawnIO enabled.
+2. Download the plugin from the [latest release](https://github.com/zuyan9/FanControl.MinisforumUM/releases/latest/download/FanControl.MinisforumUMSeries.zip).
 3. In Fan Control, open **Settings > Plugins > Install plugin...** and select
-   `FanControl.MinisforumUMSeries.dll`.
+   `FanControl.MinisforumUMSeries.zip`.
 4. On first use, verify plausible temperature readings, then enable one control
    at a time and confirm that its RPM reading and physical fan response agree.
 
