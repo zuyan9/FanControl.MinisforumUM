@@ -27,12 +27,12 @@ Compatibility is authorized by an exact host and firmware tuple, a
 profile-specific controller signature, and exact policy-table fingerprints.
 Vendor package model mappings alone never authorize EC access.
 
-| Profile | Exact host/firmware gate | Vendor package models | System code | Access |
+| Profile | Exact host/firmware gate | Model mappings | System code | Access |
 |---|---|---|---|---|
 | `f7bsd` | `Venus series`, `F7BSD` rev `1.1`, BIOS `1.06`, EC `0.8` | UM780 XTX; UM790 XTX | `0..51` | Telemetry and controls |
 | `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, BIOS `1.06`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
 | `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, BIOS `1.07` or `1.09`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
-| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, BIOS `1.08`, EC `0.5`; or `F7BSW` rev `1.0`, BIOS `1.01`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus | `0..51` | Telemetry and controls |
+| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, BIOS `1.08`, EC `0.5`; or `F7BSW` rev `1.0`, BIOS `1.01`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
 | `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, BIOS `1.06`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
 
 All other machines are unsupported. A listed profile exposes telemetry and
@@ -43,16 +43,16 @@ rejects a mismatch as soon as it can be detected.
 
 ## Evidence and validation limits
 
-The UM780 XTX is the only machine on which writes have been tested live. The
-UM790 XTX is included because Minisforum publishes one identical full BIOS/EC
-image for both XTX models, but it still needs live validation. Every other
-model mapping and controller signature comes from offline firmware analysis
-and public DMI evidence rather than live fan-control validation.
+UM780 XTX and UM880 Plus have been live write-tested with the firmware listed
+above.
+The UM790 XTX is included because Minisforum publishes one identical full
+BIOS/EC image for both XTX models, but it still needs live validation. The
+remaining models rely on offline firmware analysis and public DMI evidence.
 
-The non-UM780 host values combine public DMI corroboration with vendor-package
-evidence. In particular:
+Validation of one machine does not cover other models or firmware revisions.
+Additional profile evidence and limits:
 
-- No live controller identity has been captured for F7BSH or F7BSW.
+- No live controller identity has been recorded for F7BSH or F7BSW.
 - The HPBSD package conflicts between EC `0.1` and the advertised EC `0.2`, so
   both values are compiled as explicit alternatives.
 - The shared HPBSD package can emit an `F7BSX` board identity based on a GPIO
@@ -60,10 +60,9 @@ evidence. In particular:
   so that branch is deliberately excluded.
 
 Consequently, a vendor-package model name does not guarantee that every
-physical variant will load the plugin. Initial use on every listed machine
-other than the UM780 XTX should be supervised: confirm temperatures,
-tachometers, physical fan mapping, cleanup, and recovery before depending on
-the plugin for cooling.
+physical variant will load the plugin. Supervise initial use: confirm
+temperatures, tachometers, physical fan mapping, cleanup, and recovery before
+depending on the plugin for cooling.
 
 ## Fail-closed admission and write guards
 
@@ -80,8 +79,8 @@ The `f7bsd` and `f7bsh-f7bsd` profiles pin PNP identity `55 71 02` and
 controller profile `55 71 02 43 14 7f`. The `f7bsc`, `f7bsi`/F7BSW, and
 `hpbsd` profiles require the same product, I2EC-mode, clock, and counter bytes.
 They accept a silicon revision only when the physical PNP and live XRAM
-identities agree. These signatures are hypotheses derived from the common
-firmware lineage, not live captures.
+identities agree. These signatures were derived from the common firmware
+lineage.
 
 The plugin checks CPU and system fingerprints again as atomic write
 preconditions. It refuses to write if a controller, table, or ownership state

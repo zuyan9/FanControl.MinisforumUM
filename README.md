@@ -7,8 +7,8 @@ raw EC temperatures, and independent CPU and system fan controls.
 [Download the latest release](https://github.com/zuyan9/FanControl.MinisforumUM/releases/latest/download/FanControl.MinisforumUMSeries.zip)
 
 > [!WARNING]
-> Only some machines has been live write-tested. Support for every other listed
-> model is based on firmware analysis and public hardware data.
+> Only some models have been live write-tested. Support for other listed
+> models is based on firmware analysis and public hardware data.
 
 ## Supported systems
 

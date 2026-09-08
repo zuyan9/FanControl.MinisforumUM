@@ -50,9 +50,9 @@ Nullable analysis and warnings-as-errors are enabled in both projects.
 
 Always run the hardware-free harness before a live test. Live EC testing is not
 a routine validation step and must use an exact supported board, BIOS, EC, and
-controller profile. The UM780 XTX is currently the only machine that has been
-live write-tested; other compiled profiles are based on firmware analysis and
-must be treated as unvalidated hardware.
+controller profile. See [Supported systems](README.md#supported-systems) for
+current validation status. Validation of one host does not validate other
+models or firmware.
 
 For every live test:
 
