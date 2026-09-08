@@ -6,15 +6,9 @@ raw EC temperatures, and independent CPU and system fan controls.
 
 [Download the latest release](https://github.com/zuyan9/FanControl.MinisforumUM/releases/latest/download/FanControl.MinisforumUMSeries.zip)
 
-Requirements: Windows x64 and the .NET 10 build of Fan Control V273 with
-PawnIO enabled.
-
 > [!WARNING]
-> Only the UM780 XTX has been live write-tested. Support for every other listed
-> model is based on firmware analysis and public hardware data. Supervise first
-> use, verify both physical fans, and never run another EC or fan-control utility
-> at the same time. While system-fan control is active, firmware has no automatic
-> system-temperature fallback.
+> Only some machines has been live write-tested. Support for every other listed
+> model is based on firmware analysis and public hardware data.
 
 ## Supported systems
 
@@ -26,6 +20,7 @@ PawnIO enabled.
 | UM760 Pro, UM780 Pro, UM790 Pro | BIOS `1.07` or `1.09`, EC `2.6` | Firmware-derived |
 | UM760 Slim, UM870 Slim | BIOS `1.08`, EC `0.5` | Firmware-derived |
 | UM760 Plus, UM870 Plus | BIOS `1.01`, EC `0.5` | Firmware-derived |
+| UM880 Plus | BIOS `1.01`, EC `0.5` | Live write-tested |
 | UM880 Pro, UM890 Pro | BIOS `1.06`, EC `0.1` or `0.2` | Firmware-derived |
 
 Model name alone is not sufficient. The plugin first checks machine identity,
@@ -55,18 +50,6 @@ requests full speed at 94 C and above. System control temporarily uses the
 firmware's fixed-target handoff and therefore has no automatic temperature
 fallback while active. Resetting or disabling a control, refreshing the plugin,
 or closing Fan Control normally restores firmware control.
-
-<details>
-<summary>Upgrading from the old UM780 XTX plugin</summary>
-
-Never install both DLLs; both plugins could access the same EC.
-
-1. Exit Fan Control normally and let the old plugin restore firmware control.
-2. Delete `FanControl.MinisforumUM780XTX.dll` from the plugin folder.
-3. Start Fan Control and install `FanControl.MinisforumUMSeries.dll`.
-4. Recreate affected curves, mixes, and sensor or control bindings.
-
-</details>
 
 ## Recovery
 
