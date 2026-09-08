@@ -8,7 +8,7 @@ hardware before any live validation.
 
 - A Windows x64 development environment.
 - The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
-- The .NET 10 build of Fan Control V273. The build needs its
+- The .NET 10 build of Fan Control V275. The build needs its
   `FanControl.Plugins.dll` reference.
 
 The project looks for Fan Control in `C:\Program Files (x86)\FanControl` by
@@ -94,7 +94,7 @@ requests targeting `master`. Non-release runs use version
 `0.0.0-ci.<run-number>`. The workflow:
 
 1. installs the .NET 10 SDK;
-2. downloads the Fan Control V273 .NET 10 archive and verifies its pinned SHA-256
+2. downloads the Fan Control V275 .NET 10 archive and verifies its pinned SHA-256
    checksum before using `FanControl.Plugins.dll`;
 3. runs the hardware-free test harness in Release configuration;
 4. verifies the plugin's assembly, file, and product versions;

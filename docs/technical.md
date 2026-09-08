@@ -4,7 +4,7 @@ This document records the hardware admission rules, firmware interactions, and
 recovery behavior of FanControl.MinisforumUM. For installation and everyday
 use, see the [README](../README.md).
 
-The plugin targets Windows x64, .NET 10, Fan Control V273, and PawnIO API 2.0.
+The plugin targets Windows x64, .NET 10, Fan Control V275, and PawnIO API 2.0.
 Its assembly is `FanControl.MinisforumUMSeries.dll`, and Fan Control displays it
 as **Minisforum UM Series**.
 

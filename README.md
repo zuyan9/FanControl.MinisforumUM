@@ -25,7 +25,7 @@ raw EC temperatures, and independent CPU and system fan controls.
 
 ## Install
 
-1. Install the .NET 10 build of Fan Control V273 with PawnIO enabled.
+1. Install the .NET 10 build of Fan Control V275 with PawnIO enabled.
 2. Download the plugin from the [latest release](https://github.com/zuyan9/FanControl.MinisforumUM/releases/latest/download/FanControl.MinisforumUMSeries.zip).
 3. In Fan Control, open **Settings > Plugins > Install plugin...** and select
    `FanControl.MinisforumUMSeries.zip`.
