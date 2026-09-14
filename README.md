@@ -21,7 +21,11 @@ raw EC temperatures, and independent CPU and system fan controls.
 | UM880 Plus | BIOS `1.01`, EC `0.5` | Live write-tested |
 | UM880 Pro, UM890 Pro | BIOS `1.06`, EC `0.1` or `0.2` | Firmware-derived |
 
- All other systems are unsupported. The plugin refuses to load on a mismatch.
+All other systems are unsupported. The plugin refuses to load on a mismatch.
+
+> [!TIP]
+> Checkout [FanControl.MinisforumM1Pro](https://github.com/zuyan9/FanControl.MinisforumM1Pro) for Minisforum M1 Pro and M1 Lite.
+
 
 ## Install
 
