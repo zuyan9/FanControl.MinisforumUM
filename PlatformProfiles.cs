@@ -452,7 +452,7 @@ internal static class F7ProfileCatalog
                     "EliteMini",
                     "F7BSI",
                     "1.0",
-                    ["1.08"],
+                    ["1.08", "1.09"],
                     [(0, 5)],
                     "MGF7BSI"),
                 Host(

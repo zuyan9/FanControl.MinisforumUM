@@ -16,12 +16,16 @@ raw EC temperatures, and independent CPU and system fan controls.
 | UM790 XTX | BIOS `1.06`, EC `0.8` | Shared vendor image; not live-tested |
 | UM690 Pro | BIOS `1.06`, EC `0.8` | Firmware-derived |
 | UM760 Pro, UM780 Pro, UM790 Pro | BIOS `1.07` or `1.09`, EC `2.6` | Firmware-derived |
-| UM760 Slim, UM870 Slim | BIOS `1.08`, EC `0.5` | Firmware-derived |
+| UM760 Slim, UM870 Slim | BIOS `1.08` or `1.09`, EC `0.5` | Firmware-derived |
 | UM760 Plus, UM870 Plus | BIOS `1.01`, EC `0.5` | Firmware-derived |
 | UM880 Plus | BIOS `1.01`, EC `0.5` | Live write-tested |
 | UM880 Pro, UM890 Pro | BIOS `1.06`, EC `0.1` or `0.2` | Firmware-derived |
 
 All other systems are unsupported. The plugin refuses to load on a mismatch.
+
+For UM760 Slim BIOS `1.09`, see the [compatibility notes and system-fan
+investigation](docs/um760-slim-bios-1.09.md). The reported system fan staying near
+3,500 RPM still needs hardware validation.
 
 > [!TIP]
 > Checkout [FanControl.MinisforumM1Pro](https://github.com/zuyan9/FanControl.MinisforumM1Pro) for Minisforum M1 Pro and M1 Lite.

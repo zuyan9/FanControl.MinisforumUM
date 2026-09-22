@@ -32,7 +32,7 @@ Vendor package model mappings alone never authorize EC access.
 | `f7bsd` | `Venus series`, `F7BSD` rev `1.1`, BIOS `1.06`, EC `0.8` | UM780 XTX; UM790 XTX | `0..51` | Telemetry and controls |
 | `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, BIOS `1.06`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
 | `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, BIOS `1.07` or `1.09`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
-| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, BIOS `1.08`, EC `0.5`; or `F7BSW` rev `1.0`, BIOS `1.01`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
+| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, BIOS `1.08` or `1.09`, EC `0.5`; or `F7BSW` rev `1.0`, BIOS `1.01`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
 | `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, BIOS `1.06`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
 
 All other machines are unsupported. A listed profile exposes telemetry and
@@ -52,6 +52,10 @@ remaining models rely on offline firmware analysis and public DMI evidence.
 Validation of one machine does not cover other models or firmware revisions.
 Additional profile evidence and limits:
 
+- F7BSI BIOS `1.09` contains the same 128 KiB EC payload as `1.08`. Admission
+  retains the exact host, EC, controller, and policy checks. The system-fan
+  behavior reported in [issue #14](https://github.com/zuyan9/FanControl.MinisforumUM/issues/14)
+  is unresolved; see the [comparison and validation notes](um760-slim-bios-1.09.md).
 - No live controller identity has been recorded for F7BSH or F7BSW.
 - The HPBSD package conflicts between EC `0.1` and the advertised EC `0.2`, so
   both values are compiled as explicit alternatives.
@@ -92,6 +96,10 @@ Fan Control percentages map linearly to each profile's EC target-code range.
 CPU targets and all non-HPBSD system targets use `0..51`, nominally
 `0..5100 RPM`. HPBSD system targets use `0..40`; `100%` therefore writes code
 `40`, not `51`.
+
+These are requested target codes, not guaranteed physical fan speeds. Successful
+target and ownership readback does not establish that the fan reached that RPM;
+the tachometer reports the measured speed separately.
 
 F7BSI and F7BSW still use `0..51` even though their stored system table tops
 out at `40`: the active firmware selector independently hardcodes `51` for its
