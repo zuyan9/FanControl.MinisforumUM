@@ -68,4 +68,5 @@ check.
 ## More information
 
 - [Technical compatibility and safety design](docs/technical.md)
+- [System-fan diagnostic tool](docs/diagnostics.md)
 - [Building, testing, and contributing](CONTRIBUTING.md)

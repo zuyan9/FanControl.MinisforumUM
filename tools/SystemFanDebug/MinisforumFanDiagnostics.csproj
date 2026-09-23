@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>MinisforumFanDiagnostics</AssemblyName>
+    <RootNamespace>FanControl.MinisforumUMSeries</RootNamespace>
+    <Version>0.2.2-debug.1</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefineConstants>$(DefineConstants);SYSTEM_FAN_DIAGNOSTICS</DefineConstants>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../PlatformProfiles.cs" Link="PlatformProfiles.cs" />
+    <Compile Include="../../HostIdentity.cs" Link="HostIdentity.cs" />
+    <Compile Include="../../PawnIoNative.cs" Link="PawnIoNative.cs" />
+    <Compile Include="../../F7bsdProfile.cs" Link="F7bsdProfile.cs" />
+    <Compile Include="../../PawnIoF7bsdBackend.cs" Link="PawnIoF7bsdBackend.cs" />
+    <Compile Include="../../SystemFanTrace.cs" Link="SystemFanTrace.cs" />
+    <Compile Include="../../SystemFanDebugSession.cs" Link="SystemFanDebugSession.cs" />
+    <None Update="README.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

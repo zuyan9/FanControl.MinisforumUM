@@ -32,7 +32,7 @@ internal sealed class PawnIoTransport : IF7Transport
     private bool disposed;
     private Exception? poisonCause;
 
-    internal PawnIoTransport(F7PlatformProfile profile)
+    internal PawnIoTransport(F7PlatformProfile profile, string? fanControlDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         this.profile = profile;
@@ -45,7 +45,7 @@ internal sealed class PawnIoTransport : IF7Transport
                 "PawnIO",
                 "PawnIOLib.dll");
             candidate = new PawnIoNative(pawnIoPath);
-            candidate.OpenAndLoad(LoadLpcModule());
+            candidate.OpenAndLoad(LoadLpcModule(fanControlDirectory));
             isaMutex = mutex;
             native = candidate;
             AssertIdentity();
@@ -345,14 +345,14 @@ internal sealed class PawnIoTransport : IF7Transport
         return failure;
     }
 
-    private static byte[] LoadLpcModule()
+    private static byte[] LoadLpcModule(string? fanControlDirectory)
     {
-        string directory = File.Exists(
+        string directory = fanControlDirectory ?? (File.Exists(
             Path.Combine(AppContext.BaseDirectory, "LibreHardwareMonitorLib.dll"))
                 ? AppContext.BaseDirectory
                 : Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                    "FanControl");
+                    "FanControl"));
         string path = Path.Combine(directory, "LibreHardwareMonitorLib.dll");
         Assembly assembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(item => item.GetName().Name == "LibreHardwareMonitorLib") ??

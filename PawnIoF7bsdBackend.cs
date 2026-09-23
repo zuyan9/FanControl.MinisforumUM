@@ -27,6 +27,11 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
     {
     }
 
+    internal PawnIoF7bsdBackend(string? fanControlDirectory)
+        : this(HostIdentity.Read, selected => new PawnIoTransport(selected, fanControlDirectory))
+    {
+    }
+
     internal PawnIoF7bsdBackend(
         Func<HostIdentitySnapshot> hostIdentityReader,
         Func<F7PlatformProfile, IF7Transport> transportFactory)
@@ -45,6 +50,39 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal F7PlatformProfile ActiveProfile => profile ??
         throw new InvalidOperationException("The platform profile is unavailable.");
+
+    internal bool SupportsSystemFanTrace => SystemFanTrace.Enabled && IsInitialized;
+
+    internal SystemFanTraceSample ReadSystemFanTrace()
+    {
+        EnsureInitialized();
+        if (!SupportsSystemFanTrace)
+        {
+            throw new InvalidOperationException(
+                "System diagnostic reads require the diagnostic build and a validated supported host.");
+        }
+        return new SystemFanTraceSample(
+            ActiveSystemCode,
+            ActiveProfile.SystemMaximumCode,
+            ActiveTransport().Read(SystemFanTrace.Addresses));
+    }
+
+    internal EcRegisterValue[] ReadSystemFanConfiguration()
+    {
+        EnsureInitialized();
+        if (!SupportsSystemFanTrace)
+        {
+            throw new InvalidOperationException("System diagnostics are not enabled.");
+        }
+        ushort[] addresses = SystemFanTrace.ConfigurationAddresses;
+        byte[] values = ActiveTransport().Read(addresses);
+        if (values.Length != addresses.Length)
+        {
+            throw new IOException("Unexpected diagnostic configuration sample length.");
+        }
+        return addresses.Select((address, index) =>
+            new EcRegisterValue(address, values[index])).ToArray();
+    }
 
     internal F7bsdStartupRecovery Initialize()
     {

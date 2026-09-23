@@ -12,8 +12,13 @@
     <FanControlDir Condition="'$(FanControlDir)' == ''">C:\Program Files (x86)\FanControl</FanControlDir>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(SystemFanDiagnostics)' == 'true'">
+    <DefineConstants>$(DefineConstants);SYSTEM_FAN_DIAGNOSTICS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="tools\**\*.cs" />
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>FanControl.MinisforumUMSeries.Tests</_Parameter1>
     </AssemblyAttribute>

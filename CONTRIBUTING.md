@@ -46,6 +46,11 @@ dotnet run `
 Omit the `FanControlDir` property when Fan Control is in the default location.
 Nullable analysis and warnings-as-errors are enabled in both projects.
 
+The [system-fan diagnostic tool](docs/diagnostics.md) runs a bounded target sweep,
+records controller state, and restores firmware control across supported profiles.
+Its tests use `-p:SystemFanDiagnostics=true`; normal plugin builds leave the
+additional diagnostic reads disabled.
+
 ## Hardware safety
 
 Always run the hardware-free harness before a live test. Live EC testing is not

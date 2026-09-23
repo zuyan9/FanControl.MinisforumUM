@@ -94,6 +94,8 @@ internal static class F7bsdProfile
         .. CpuSnapshotAddresses,
         .. SystemPolicyAddresses,
         .. SystemStateAddresses,
+        .. (SystemFanTrace.Enabled ? SystemFanTrace.Addresses : []),
+        .. (SystemFanTrace.Enabled ? SystemFanTrace.ConfigurationAddresses : []),
     ];
 
     internal static byte ToCode(float percentage, byte maximumCode)

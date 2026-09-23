@@ -130,6 +130,23 @@ internal static class Program
             ("all compiled profiles enable normal control", AllProfilesEnableNormalControl),
             ("system diagnostics coalesce changes and clear on reset", SystemDiagnosticsCoalesce),
             ("system diagnostics omit failed control", SystemDiagnosticsFailure),
+            ("system trace gates extra reads by build and validated profile", SystemTraceGatesReads),
+            ("system trace reads live values without mutating control", SystemTraceReadOnly),
+            ("system trace repeats unchanged samples and clears its interval", SystemTraceScheduling),
+            ("system trace failure leaves control and recovery available", SystemTraceFailure),
+            ("system trace rejects malformed samples without retrying", SystemTraceMalformedSample),
+            ("system trace labels changing state and unstable tach", SystemTraceChangingSample),
+            ("system trace formats stable raw tach and ownership", SystemTraceFormatting),
+            ("system trace does not add writable addresses", SystemTraceWriteAllowlist),
+            ("system debug sweeps supported profiles and restores firmware", SystemDebugSweep),
+            ("system debug single target uses the profile maximum", SystemDebugSingleTarget),
+            ("system debug cancellation restores firmware", SystemDebugCancellation),
+            ("system debug sample failure aborts later stages", SystemDebugReadFailure),
+            ("system debug live target drift aborts later stages", SystemDebugTargetDrift),
+            ("system debug exclusivity checks prevent and stop control", SystemDebugExclusivity),
+            ("system debug rejects invalid options before hardware access", SystemDebugInvalidOptions),
+            ("system debug exposes failed cleanup", SystemDebugCleanupFailure),
+            ("system debug distinguishes log failure from cleanup failure", SystemDebugLoggingFailure),
             ("immutable policy before recovery", CorruptPolicyBlocksRecovery),
             ("HPBSD system maximum", HpbsdSystemMaximum),
             ("F7BSD set and reset transactions", F7bsdSetResetTransactions),
@@ -426,6 +443,593 @@ internal static class Program
         Equal<byte?>(null, backend.ActiveSystemCode);
         backend.Dispose();
         True(transport.Disposed);
+    }
+
+    private static void SystemTraceGatesReads()
+    {
+        foreach (SupportedHost supported in SupportedHosts)
+        {
+            F7PlatformProfile profile = F7ProfileCatalog.Get(supported.ProfileId);
+            FakeTransport transport = new(profile, selector: 0xb1);
+            PawnIoF7bsdBackend backend = CreateBackend(supported.Host, transport);
+            SystemFanTrace trace = new(new ManualTimeProvider());
+            False(backend.SupportsSystemFanTrace);
+            Equal<string?>(null, trace.Poll(backend));
+            Throws<InvalidOperationException>(() => backend.ReadSystemFanTrace());
+            Throws<InvalidOperationException>(() => backend.ReadSystemFanConfiguration());
+            Equal(0, transport.ReadBatches.Count);
+
+            backend.Initialize();
+            bool expectedSupport = SystemFanTrace.Enabled;
+            Equal(expectedSupport, backend.SupportsSystemFanTrace);
+            int beforePoll = transport.ReadBatches.Count;
+            Equal(expectedSupport, trace.Poll(backend) is not null);
+            Equal(beforePoll + (expectedSupport ? 1 : 0), transport.ReadBatches.Count);
+            if (expectedSupport)
+            {
+                SequenceEqual(SystemFanTrace.Addresses, transport.ReadBatches[^1]);
+                EcRegisterValue[] configuration = backend.ReadSystemFanConfiguration();
+                SequenceEqual(SystemFanTrace.ConfigurationAddresses,
+                    configuration.Select(value => value.Address));
+                SequenceEqual(SystemFanTrace.ConfigurationAddresses, transport.ReadBatches[^1]);
+                Equal(beforePoll + 2, transport.ReadBatches.Count);
+            }
+            else
+            {
+                Throws<InvalidOperationException>(() => backend.ReadSystemFanTrace());
+                Throws<InvalidOperationException>(() => backend.ReadSystemFanConfiguration());
+                Equal(beforePoll, transport.ReadBatches.Count);
+            }
+
+            backend.Dispose();
+            False(backend.SupportsSystemFanTrace);
+            int afterDispose = transport.ReadBatches.Count;
+            trace.Clear();
+            Equal<string?>(null, trace.Poll(backend));
+            Throws<InvalidOperationException>(() => backend.ReadSystemFanTrace());
+            Throws<InvalidOperationException>(() => backend.ReadSystemFanConfiguration());
+            Equal(afterDispose, transport.ReadBatches.Count);
+        }
+
+        F7PlatformProfile f7bsi = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport failedTransport = new(f7bsi, selector: 0xb1);
+        failedTransport.CorruptSystemPolicy();
+        PawnIoF7bsdBackend failedBackend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            failedTransport);
+        Throws<PlatformNotSupportedException>(() => failedBackend.Initialize());
+        False(failedBackend.SupportsSystemFanTrace);
+        int afterFailure = failedTransport.ReadBatches.Count;
+        Equal<string?>(null, new SystemFanTrace().Poll(failedBackend));
+        Throws<InvalidOperationException>(() => failedBackend.ReadSystemFanTrace());
+        Throws<InvalidOperationException>(() => failedBackend.ReadSystemFanConfiguration());
+        Equal(afterFailure, failedTransport.ReadBatches.Count);
+        failedBackend.Dispose();
+    }
+
+    private static void SystemTraceReadOnly()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            transport);
+        backend.Initialize();
+        backend.SetSystem(20);
+        transport.SetByte(F7bsdProfile.SystemTargetAddress, 15);
+        transport.SetByte(F7bsdProfile.SystemTemperatureOverrideAddress, 0);
+        transport.SetByte(F7bsdProfile.SystemEffectiveTemperatureAddress, 45);
+        transport.SetByte(0x1804, 42);
+        int beforeReads = transport.ReadBatches.Count;
+        int beforeWrites = transport.WriteAttempts;
+        KeyValuePair<ushort, byte>[] beforeMemory = transport.SnapshotMemory();
+
+        SystemFanTraceSample sample = backend.ReadSystemFanTrace();
+        Equal<byte?>(20, sample.RequestedCode);
+        Equal((byte)51, sample.MaximumCode);
+        Equal((byte)15, sample.Values[Array.IndexOf(
+            SystemFanTrace.Addresses, F7bsdProfile.SystemTargetAddress)]);
+        Equal((byte)0, sample.Values[Array.IndexOf(
+            SystemFanTrace.Addresses, F7bsdProfile.SystemTemperatureOverrideAddress)]);
+        Equal((byte)42, sample.Values[Array.IndexOf(SystemFanTrace.Addresses, (ushort)0x1804)]);
+        string message = SystemFanTrace.Format(sample, TimeSpan.Zero);
+        True(message.Contains("requested=20/51 (cached)", StringComparison.Ordinal));
+        True(message.Contains("live-target=15->15", StringComparison.Ordinal));
+        True(message.Contains("ownership=firmware", StringComparison.Ordinal));
+        True(message.Contains("pwm2=42->42", StringComparison.Ordinal));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        SequenceEqual(SystemFanTrace.Addresses, transport.ReadBatches[^1]);
+        EcRegisterValue[] configuration = backend.ReadSystemFanConfiguration();
+        SequenceEqual(SystemFanTrace.ConfigurationAddresses,
+            configuration.Select(value => value.Address));
+        SequenceEqual(transport.ValuesAt(SystemFanTrace.ConfigurationAddresses),
+            configuration.Select(value => value.Value));
+        Equal(beforeReads + 2, transport.ReadBatches.Count);
+        Equal(beforeWrites, transport.WriteAttempts);
+        Equal<byte?>(20, backend.ActiveSystemCode);
+        True(backend.IsInitialized);
+        SequenceEqual(beforeMemory, transport.SnapshotMemory());
+
+        transport.MakeSystemRecoverable(20);
+        backend.ResetSystem();
+        backend.Dispose();
+        True(transport.Disposed);
+    }
+
+    private static void SystemTraceScheduling()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            transport);
+        backend.Initialize();
+        ManualTimeProvider clock = new();
+        SystemFanTrace trace = new(clock);
+        int beforeReads = transport.ReadBatches.Count;
+        KeyValuePair<ushort, byte>[] beforeMemory = transport.SnapshotMemory();
+        True(trace.Poll(backend) is not null);
+        Equal<byte?>(null, backend.ActiveSystemCode);
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        Equal<string?>(null, trace.Poll(backend));
+        clock.Advance(4);
+        Equal<string?>(null, trace.Poll(backend));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        clock.Advance(1);
+        True(trace.Poll(backend) is not null);
+        Equal(beforeReads + 2, transport.ReadBatches.Count);
+        clock.Advance(5);
+        True(trace.Poll(backend) is not null);
+        Equal(beforeReads + 3, transport.ReadBatches.Count);
+
+        trace.Clear();
+        True(trace.Poll(backend) is not null);
+        Equal(beforeReads + 4, transport.ReadBatches.Count);
+        Equal(0, transport.WriteAttempts);
+        SequenceEqual(beforeMemory, transport.SnapshotMemory());
+        backend.Dispose();
+    }
+
+    private static void SystemTraceFailure()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            transport);
+        backend.Initialize();
+        backend.SetSystem(20);
+        ManualTimeProvider clock = new();
+        SystemFanTrace trace = new(clock);
+        int beforeReads = transport.ReadBatches.Count;
+        int beforeWrites = transport.WriteAttempts;
+        KeyValuePair<ushort, byte>[] beforeMemory = transport.SnapshotMemory();
+        transport.FailNextRead = true;
+        string failure = trace.Poll(backend) ??
+            throw new InvalidOperationException("Expected one trace failure message.");
+        True(failure.Contains("sampling stopped", StringComparison.Ordinal));
+        True(failure.Contains("Expected fake read failure", StringComparison.Ordinal));
+        False(failure.Contains("rpm=", StringComparison.Ordinal));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        Equal(beforeWrites, transport.WriteAttempts);
+        Equal<byte?>(20, backend.ActiveSystemCode);
+        True(backend.IsInitialized);
+        SequenceEqual(beforeMemory, transport.SnapshotMemory());
+
+        Equal<string?>(null, trace.Poll(backend));
+        clock.Advance(60);
+        Equal<string?>(null, trace.Poll(backend));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        trace.Clear();
+        True(trace.Poll(backend) is not null);
+        Equal(beforeReads + 2, transport.ReadBatches.Count);
+        Equal(beforeWrites, transport.WriteAttempts);
+        Equal((byte)25, backend.SetSystem(25));
+        backend.ResetSystem();
+        Equal<byte?>(null, backend.ActiveSystemCode);
+        backend.SetSystem(20);
+        transport.FailNextWrite = true;
+        Throws<AggregateException>(backend.Dispose);
+        False(backend.SupportsSystemFanTrace);
+        trace.Clear();
+        int afterFailedDispose = transport.ReadBatches.Count;
+        Equal<string?>(null, trace.Poll(backend));
+        Throws<InvalidOperationException>(() => backend.ReadSystemFanTrace());
+        Equal(afterFailedDispose, transport.ReadBatches.Count);
+        backend.Dispose();
+        True(transport.Disposed);
+    }
+
+    private static void SystemTraceMalformedSample()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            transport);
+        backend.Initialize();
+        int beforeReads = transport.ReadBatches.Count;
+        transport.TransformNextRead = static (_, values) => values[..^1];
+        SystemFanTrace trace = new(new ManualTimeProvider());
+        string failure = trace.Poll(backend) ??
+            throw new InvalidOperationException("Expected malformed sample message.");
+        True(failure.Contains("sample length", StringComparison.Ordinal));
+        False(failure.Contains("rpm=", StringComparison.Ordinal));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        Equal<string?>(null, trace.Poll(backend));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        Equal(0, transport.WriteAttempts);
+        True(backend.IsInitialized);
+        backend.Dispose();
+    }
+
+    private static void SystemTraceChangingSample()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsi");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(
+            F7bsiHost("F7BSI", "MGF7BSI", "1.09"),
+            transport);
+        backend.Initialize();
+        backend.SetSystem(20);
+        transport.SetByte(0x1804, 42);
+        transport.SetByte(0x1820, 0x68);
+        transport.SetByte(0x1821, 0x02);
+        int beforeReads = transport.ReadBatches.Count;
+        int beforeWrites = transport.WriteAttempts;
+        KeyValuePair<ushort, byte>[] beforeMemory = transport.SnapshotMemory();
+        transport.TransformNextRead = static (_, values) =>
+        {
+            values[6] = 0x69;
+            values[18] = 15;
+            values[19] = 41;
+            return values;
+        };
+        ManualTimeProvider clock = new();
+        SystemFanTrace trace = new(clock);
+        string message = trace.Poll(backend) ??
+            throw new InvalidOperationException("Expected changing sample message.");
+        True(message.Contains("requested=20/51 (cached)", StringComparison.Ordinal));
+        True(message.Contains("live-target=20->15", StringComparison.Ordinal));
+        True(message.Contains("ownership=changed-during-read", StringComparison.Ordinal));
+        True(message.Contains("pwm2=42->41", StringComparison.Ordinal));
+        True(message.Contains("rpm=unstable;", StringComparison.Ordinal));
+        True(message.Contains("tach=68/02/69", StringComparison.Ordinal));
+        True(message.Contains("sequential-read=true", StringComparison.Ordinal));
+        Equal(beforeReads + 1, transport.ReadBatches.Count);
+        Equal(beforeWrites, transport.WriteAttempts);
+        Equal<byte?>(20, backend.ActiveSystemCode);
+        SequenceEqual(beforeMemory, transport.SnapshotMemory());
+
+        clock.Advance(5);
+        string next = trace.Poll(backend) ??
+            throw new InvalidOperationException("Unstable tach must not disable future samples.");
+        True(next.Contains("rpm=3500;", StringComparison.Ordinal));
+        True(next.Contains("ownership=fixed-target", StringComparison.Ordinal));
+        Equal(beforeReads + 2, transport.ReadBatches.Count);
+        Equal(beforeWrites, transport.WriteAttempts);
+        backend.Dispose();
+    }
+
+    private static void SystemTraceFormatting()
+    {
+        byte[] values = new byte[SystemFanTrace.Addresses.Length];
+        values[0] = values[1] = values[16] = values[17] = 0xff;
+        values[2] = values[18] = 20;
+        values[3] = values[19] = 42;
+        values[4] = values[6] = 0x68;
+        values[5] = 0x02;
+        string message = SystemFanTrace.Format(new(null, 51, values), TimeSpan.FromSeconds(5));
+        True(message.Contains("t=5.0s", StringComparison.Ordinal));
+        True(message.Contains("requested=none/51 (cached)", StringComparison.Ordinal));
+        True(message.Contains("ownership=fixed-target", StringComparison.Ordinal));
+        True(message.Contains("rpm=3500; tach=68/02/68", StringComparison.Ordinal));
+
+        values[1] = values[17] = 0x20;
+        message = SystemFanTrace.Format(new(null, 51, values), TimeSpan.Zero);
+        True(message.Contains("ownership=other", StringComparison.Ordinal));
+        Throws<IOException>(() => SystemFanTrace.Format(
+            new(null, 51, values[..^1]), TimeSpan.Zero));
+    }
+
+    private static void SystemTraceWriteAllowlist()
+    {
+        ushort[] originalReadAddresses =
+        [
+            .. F7bsdProfile.ControllerProfileAddresses,
+            .. F7bsdProfile.TelemetryAddresses,
+            .. F7bsdProfile.CpuSnapshotAddresses,
+            .. F7bsdProfile.SystemPolicyAddresses,
+            .. F7bsdProfile.SystemStateAddresses,
+        ];
+        ushort[] addedAddresses = SystemFanTrace.Addresses
+            .Union(SystemFanTrace.ConfigurationAddresses)
+            .Except(originalReadAddresses)
+            .ToArray();
+        True(addedAddresses.Length > 0);
+        foreach (ExpectedProfile expected in ExpectedProfiles)
+        {
+            F7PlatformProfile profile = F7ProfileCatalog.Get(expected.Id);
+            byte[] baseline = profile.CpuProfiles.First().Baseline.ToArray();
+            foreach (ushort address in addedAddresses)
+            {
+                Throws<InvalidOperationException>(() => F7bsdProfile.AssertWritesAllowed(
+                    profile, [new EcWrite(address, 0)]));
+                Throws<InvalidOperationException>(() => F7bsdProfile.AssertWritesAllowed(
+                    profile, [new EcWrite(address, 0xff)]));
+                Throws<InvalidOperationException>(() => F7bsdProfile.AssertCpuWritesAllowed(
+                    profile, [new EcWrite(address, 0)], baseline));
+                if (SystemFanTrace.Enabled)
+                {
+                    F7bsdProfile.AssertReadsAllowed([address]);
+                }
+                else
+                {
+                    Throws<InvalidOperationException>(() => F7bsdProfile.AssertReadsAllowed([address]));
+                }
+            }
+        }
+    }
+
+    private static void SystemDebugSweep()
+    {
+        foreach (SupportedHost supported in SupportedHosts)
+        {
+            DebugFixture fixture = new(supported);
+            SystemFanDebugSession session = fixture.Session();
+            if (!SystemFanTrace.Enabled)
+            {
+                Throws<InvalidOperationException>(() => session.Run(new(5), CancellationToken.None));
+                Equal(0, fixture.Transport.ReadBatches.Count);
+                Equal(0, fixture.Transport.WriteAttempts);
+                False(fixture.Backend.IsInitialized);
+                continue;
+            }
+
+            session.Run(new(5), CancellationToken.None);
+            byte maximum = fixture.Transport.Profile.SystemMaximumCode;
+            SequenceEqual(
+                new[]
+                {
+                    maximum,
+                    F7bsdProfile.ToCode(70, maximum),
+                    F7bsdProfile.ToCode(40, maximum),
+                    maximum,
+                },
+                fixture.TargetWrites());
+            SequenceEqual(
+                new byte[] { 0xff, 0 },
+                fixture.Transport.WriteBatches.SelectMany(batch => batch)
+                    .Where(write => write.Address == F7bsdProfile.SystemTemperatureOverrideAddress)
+                    .Select(write => write.Value));
+            Equal(6, fixture.Transport.WriteAttempts);
+            Equal(27, fixture.Transport.ReadBatches.Count(batch =>
+                batch.SequenceEqual(SystemFanTrace.Addresses)));
+            fixture.AssertRestored();
+        }
+    }
+
+    private static void SystemDebugSingleTarget()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        foreach (int percent in new[] { 0, 70, 100 })
+        {
+            DebugFixture fixture = new(SupportedHosts.First(host => host.ProfileId == "hpbsd"));
+            fixture.Session().Run(new(5, percent), CancellationToken.None);
+            byte code = F7bsdProfile.ToCode(percent, 40);
+            SequenceEqual(code == 40 ? new byte[] { code } : [code, 40], fixture.TargetWrites());
+            fixture.AssertRestored();
+        }
+    }
+
+    private static void SystemDebugCancellation()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        using CancellationTokenSource cancellation = new();
+        SystemFanDebugSession session = fixture.Session(beforeWait: _ =>
+        {
+            if (fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                cancellation.Cancel();
+            }
+        });
+        Throws<OperationCanceledException>(() => session.Run(new(5), cancellation.Token));
+        SequenceEqual(new byte[] { 51 }, fixture.TargetWrites());
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugReadFailure()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        bool injected = false;
+        SystemFanDebugSession session = fixture.Session(beforeWait: _ =>
+        {
+            if (!injected && fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                injected = true;
+                fixture.Transport.FailNextRead = true;
+            }
+        });
+        IOException failure = Throws<IOException>(() => session.Run(new(5), CancellationToken.None));
+        True(failure.Message.Contains("Expected fake read failure", StringComparison.Ordinal));
+        True(injected);
+        SequenceEqual(new byte[] { 51 }, fixture.TargetWrites());
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugTargetDrift()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        bool injected = false;
+        SystemFanDebugSession session = fixture.Session(beforeWait: _ =>
+        {
+            if (!injected && fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                injected = true;
+                fixture.Transport.SetByte(F7bsdProfile.SystemTargetAddress, 19);
+            }
+        });
+        Throws<IOException>(() => session.Run(new(5), CancellationToken.None));
+        True(injected);
+        SequenceEqual(new byte[] { 51, 51 }, fixture.TargetWrites());
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugExclusivity()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture beforeStart = new();
+        SystemFanDebugSession rejected = beforeStart.Session(
+            assertExclusive: () => throw new IOException("Expected competing utility."));
+        Throws<IOException>(() => rejected.Run(new(5), CancellationToken.None));
+        Equal(0, beforeStart.Transport.ReadBatches.Count);
+        Equal(0, beforeStart.Transport.WriteAttempts);
+        False(beforeStart.Backend.IsInitialized);
+
+        DebugFixture duringControl = new();
+        bool injected = false;
+        SystemFanDebugSession interrupted = duringControl.Session(assertExclusive: () =>
+        {
+            if (duringControl.Backend.ActiveSystemCode.HasValue)
+            {
+                injected = true;
+                throw new IOException("Expected competing utility.");
+            }
+        });
+        Throws<IOException>(() => interrupted.Run(new(5), CancellationToken.None));
+        True(injected);
+        SequenceEqual(new byte[] { 51 }, duringControl.TargetWrites());
+        duringControl.AssertRestored();
+    }
+
+    private static void SystemDebugInvalidOptions()
+    {
+        foreach ((int hold, int? target) in new (int, int?)[]
+        {
+            (4, null), (301, null), (5, -1), (5, 101),
+        })
+        {
+            DebugFixture fixture = new();
+            SystemFanDebugSession session = fixture.Session();
+            Throws<ArgumentOutOfRangeException>(() =>
+                session.Run(new(hold, target), CancellationToken.None));
+            Equal(0, fixture.Transport.ReadBatches.Count);
+            Equal(0, fixture.Transport.WriteAttempts);
+            False(fixture.Backend.IsInitialized);
+        }
+    }
+
+    private static void SystemDebugCleanupFailure()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        using CancellationTokenSource cancellation = new();
+        SystemFanDebugSession session = fixture.Session(beforeWait: _ =>
+        {
+            if (fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                fixture.Transport.FailNextWrite = true;
+                cancellation.Cancel();
+            }
+        });
+        AggregateException failure = Throws<AggregateException>(() =>
+            session.Run(new(5), cancellation.Token));
+        True(failure.Flatten().InnerExceptions.Any(exception => exception is OperationCanceledException));
+        True(failure.Flatten().InnerExceptions.Any(exception => exception is IOException));
+        False(fixture.Backend.IsInitialized);
+        fixture.Backend.Dispose();
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugLoggingFailure()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        ManualTimeProvider clock = new();
+        SystemFanDebugSession session = new(
+            fixture.Backend,
+            message =>
+            {
+                fixture.Messages.Add(message);
+                if (message.StartsWith("Cleanup complete", StringComparison.Ordinal))
+                {
+                    True(fixture.Transport.Disposed);
+                    throw new IOException("Expected cleanup log failure.");
+                }
+            },
+            clock: clock,
+            wait: (delay, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                clock.Advance(delay);
+            });
+
+        IOException failure = Throws<IOException>(() =>
+            session.Run(new(5, 100), CancellationToken.None));
+        Equal("Expected cleanup log failure.", failure.Message);
+        fixture.AssertRestored();
+        Equal(3, fixture.Transport.WriteAttempts);
+        SequenceEqual(new byte[] { 51 }, fixture.TargetWrites());
+        False(fixture.Messages.Any(message =>
+            message.Contains("RESTORATION NOT VERIFIED", StringComparison.Ordinal)));
+        False(fixture.Messages.Any(message =>
+            message.Contains("Cleanup retry", StringComparison.Ordinal)));
     }
 
     private static void CorruptPolicyBlocksRecovery()
@@ -892,6 +1496,62 @@ internal static class Program
         string ProfileId,
         HostIdentitySnapshot Host);
 
+    private sealed class DebugFixture
+    {
+        private readonly byte[] cpuBaseline;
+        private readonly byte[] policyBaseline;
+        private readonly ManualTimeProvider clock = new();
+
+        internal DebugFixture(SupportedHost? supported = null)
+        {
+            supported ??= SupportedHosts.First(host => host.ProfileId == "f7bsi");
+            Transport = new(F7ProfileCatalog.Get(supported.ProfileId), selector: 0xb1);
+            Transport.SetByte(0x0309, 35);
+            Transport.SetByte(0x0305, 25);
+            Transport.SetByte(0x1820, 0x68);
+            Transport.SetByte(0x1821, 0x02);
+            Backend = CreateBackend(supported.Host, Transport);
+            cpuBaseline = Transport.ValuesAt(F7bsdProfile.CpuSnapshotAddresses);
+            policyBaseline = Transport.ValuesAt(F7bsdProfile.SystemPolicyAddresses);
+        }
+
+        internal FakeTransport Transport { get; }
+
+        internal PawnIoF7bsdBackend Backend { get; }
+
+        internal List<string> Messages { get; } = [];
+
+        internal SystemFanDebugSession Session(
+            Action? assertExclusive = null,
+            Action<CancellationToken>? beforeWait = null) => new(
+                Backend,
+                Messages.Add,
+                assertExclusive,
+                clock,
+                (delay, cancellationToken) =>
+                {
+                    beforeWait?.Invoke(cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    clock.Advance(delay);
+                });
+
+        internal IEnumerable<byte> TargetWrites() =>
+            Transport.WriteBatches.SelectMany(batch => batch)
+                .Where(write => write.Address == F7bsdProfile.SystemTargetAddress)
+                .Select(write => write.Value);
+
+        internal void AssertRestored()
+        {
+            False(Backend.IsInitialized);
+            True(Transport.Disposed);
+            SequenceEqual(cpuBaseline, Transport.ValuesAt(F7bsdProfile.CpuSnapshotAddresses));
+            SequenceEqual(policyBaseline, Transport.ValuesAt(F7bsdProfile.SystemPolicyAddresses));
+            SequenceEqual(
+                new byte[] { 45, 0, Transport.Profile.SystemMaximumCode },
+                Transport.ValuesAt(F7bsdProfile.SystemStateAddresses));
+        }
+    }
+
     private sealed class ManualTimeProvider : TimeProvider
     {
         private long timestamp;
@@ -902,6 +1562,8 @@ internal static class Program
 
         internal void Advance(int seconds) =>
             timestamp += TimeSpan.FromSeconds(seconds).Ticks;
+
+        internal void Advance(TimeSpan elapsed) => timestamp += elapsed.Ticks;
     }
 
     private sealed class FakeTransport : IF7Transport
@@ -934,9 +1596,15 @@ internal static class Program
 
         internal List<EcWrite[]> WriteBatches { get; } = [];
 
+        internal List<ushort[]> ReadBatches { get; } = [];
+
         internal Action<FakeTransport>? MutateBeforeNextWriteValidation { get; set; }
 
         internal bool FailNextWrite { get; set; }
+
+        internal bool FailNextRead { get; set; }
+
+        internal Func<ushort[], byte[], byte[]>? TransformNextRead { get; set; }
 
         internal bool Disposed { get; private set; }
 
@@ -944,7 +1612,16 @@ internal static class Program
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             F7bsdProfile.AssertReadsAllowed(addresses);
-            return addresses.Select(ByteAt).ToArray();
+            ReadBatches.Add((ushort[])addresses.Clone());
+            if (FailNextRead)
+            {
+                FailNextRead = false;
+                throw new IOException("Expected fake read failure.");
+            }
+            byte[] values = addresses.Select(ByteAt).ToArray();
+            Func<ushort[], byte[], byte[]>? transform = TransformNextRead;
+            TransformNextRead = null;
+            return transform is null ? values : transform(addresses, values);
         }
 
         public void WriteVerified(
@@ -991,6 +1668,11 @@ internal static class Program
 
         internal byte[] ValuesAt(ushort[] addresses) =>
             addresses.Select(ByteAt).ToArray();
+
+        internal void SetByte(ushort address, byte value) => memory[address] = value;
+
+        internal KeyValuePair<ushort, byte>[] SnapshotMemory() =>
+            memory.OrderBy(item => item.Key).ToArray();
 
         private void Apply(
             EcExpectation[] before,

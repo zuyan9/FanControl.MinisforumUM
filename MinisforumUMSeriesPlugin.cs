@@ -16,6 +16,7 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
     private readonly ControlSensor cpuControl;
     private readonly ControlSensor systemControl;
     private readonly SystemControlDiagnostics systemDiagnostics = new();
+    private readonly SystemFanTrace systemTrace = new();
     private PawnIoF7bsdBackend? backend;
 
     public MinisforumUMSeriesPlugin()
@@ -61,6 +62,11 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
                 F7bsdStartupRecovery recovery = candidate.Initialize();
                 Apply(candidate.ReadTelemetry());
                 Log(StartupMessage(recovery));
+                if (candidate.SupportsSystemFanTrace)
+                {
+                    Log($"{SystemFanTrace.Marker} enabled: sequential read-only samples " +
+                        "every 5 seconds; requested is cached, target/ownership/PWM/tach are live.");
+                }
             }
             catch (Exception failure)
             {
@@ -119,6 +125,16 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
                 ClearTelemetry();
                 Log($"Minisforum EC telemetry read failed: {exception.Message}");
             }
+            // Capture raw diagnostic bytes even when normal telemetry could not
+            // decode a stable tach sample. Poll isolates and stops failed reads.
+            if (backend is not null)
+            {
+                string? trace = systemTrace.Poll(backend);
+                if (trace is not null)
+                {
+                    Log(trace);
+                }
+            }
         }
     }
 
@@ -143,6 +159,7 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
             cpuControl.Clear();
             systemControl.Clear();
             systemDiagnostics.Clear();
+            systemTrace.Clear();
             ClearTelemetry();
         }
     }
