@@ -49,6 +49,7 @@ internal static class Program
         new("f7bsc", F7bscHost("1.07")),
         new("f7bsc", F7bscHost("1.09")),
         new("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.08")),
+        new("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.09")),
         new("f7bsi", F7bsiHost("F7BSW", "MGF7BSW", "1.01")),
         new("hpbsd", HpbsdHost(ecMinor: 1)),
         new("hpbsd", HpbsdHost(ecMinor: 2)),
@@ -114,6 +115,7 @@ internal static class Program
         [
             ("host profile resolution", HostProfileResolution),
             ("host mismatch rejection", HostMismatchRejection),
+            ("host requirement overlap", HostRequirementOverlap),
         ];
         if (OperatingSystem.IsWindows())
         {
@@ -126,6 +128,8 @@ internal static class Program
         [
             ("controller masks", ControllerMaskBehavior),
             ("all compiled profiles enable normal control", AllProfilesEnableNormalControl),
+            ("system diagnostics coalesce changes and clear on reset", SystemDiagnosticsCoalesce),
+            ("system diagnostics omit failed control", SystemDiagnosticsFailure),
             ("immutable policy before recovery", CorruptPolicyBlocksRecovery),
             ("HPBSD system maximum", HpbsdSystemMaximum),
             ("F7BSD set and reset transactions", F7bsdSetResetTransactions),
@@ -164,7 +168,7 @@ internal static class Program
 
     private static void HostProfileResolution()
     {
-        foreach (SupportedHost supported in SupportedHosts)
+        foreach (SupportedHost supported in HostsWithBiosMetadata())
         {
             Equal(supported.ProfileId, F7ProfileCatalog.Resolve(supported.Host).Id);
         }
@@ -172,24 +176,102 @@ internal static class Program
 
     private static void HostMismatchRejection()
     {
-        HostIdentitySnapshot exact = F7bsiHost("F7BSI", "MGF7BSI", "1.08");
-        HostIdentitySnapshot[] mismatches =
-        [
-            exact with { Product = "EliteMini series" },
-            exact with { SystemVersion = "1.1" },
-            exact with { Sku = "MGF7BSW" },
-            exact with { Family = "Venus" },
-            exact with { Board = "F7BSW" },
-            exact with { BoardVersion = "1.1" },
-            exact with { BiosVersion = "1.09" },
-            exact with { EcMajor = 1 },
-            exact with { EcMinor = 4 },
-        ];
-
-        foreach (HostIdentitySnapshot mismatch in mismatches)
+        foreach (SupportedHost supported in HostsWithBiosMetadata())
         {
-            Throws<PlatformNotSupportedException>(
-                () => F7ProfileCatalog.Resolve(mismatch));
+            HostIdentitySnapshot exact = supported.Host;
+            List<HostIdentitySnapshot> mismatches =
+            [
+                exact with { Product = "Unknown product" },
+                exact with { Board = "Unknown board" },
+                exact with { BoardVersion = "Unknown revision" },
+                exact with { EcMajor = 255 },
+                exact with { EcMinor = 255 },
+            ];
+            if (exact.Board == "F7BSI")
+            {
+                mismatches.AddRange(
+                [
+                    exact with { Product = "EliteMini series" },
+                    exact with { SystemVersion = "1.1" },
+                    exact with { Sku = "MGF7BSW" },
+                    exact with { Family = "Venus" },
+                    exact with { BoardVersion = "1.1" },
+                    exact with { EcMajor = 1 },
+                    exact with { EcMinor = 4 },
+                    exact with { EcMinor = 6 },
+                ]);
+            }
+
+            foreach (HostIdentitySnapshot mismatch in mismatches)
+            {
+                bool transportCreated = false;
+                PawnIoF7bsdBackend backend = new(
+                    () => mismatch,
+                    profile =>
+                    {
+                        transportCreated = true;
+                        return new FakeTransport(profile, selector: 0xb1);
+                    });
+                Throws<PlatformNotSupportedException>(() => backend.Initialize());
+                False(transportCreated);
+                backend.Dispose();
+            }
+        }
+    }
+
+    private static void HostRequirementOverlap()
+    {
+        static HostRequirement Requirement(
+            string product = "EliteMini Series",
+            string? systemVersion = "1.0",
+            string? family = "EliteMini",
+            string board = "F7BSI",
+            string boardVersion = "1.0",
+            EcVersion[]? ecVersions = null,
+            string? sku = "MGF7BSI") => new(
+                product,
+                systemVersion,
+                family,
+                board,
+                boardVersion,
+                ecVersions ?? [new(0, 5)],
+                sku);
+
+        HostRequirement exact = Requirement();
+        HostRequirement[] overlaps =
+        [
+            Requirement(),
+            Requirement(systemVersion: null),
+            Requirement(family: null),
+            Requirement(sku: null),
+            Requirement(ecVersions: [new(0, 4), new(0, 5)]),
+        ];
+        foreach (HostRequirement overlap in overlaps)
+        {
+            True(exact.Overlaps(overlap));
+            True(overlap.Overlaps(exact));
+            foreach (string biosVersion in new[] { "1.08", "1.09", "future BIOS", "" })
+            {
+                HostIdentitySnapshot host = F7bsiHost("F7BSI", "MGF7BSI", biosVersion);
+                True(exact.Matches(host));
+                True(overlap.Matches(host));
+            }
+        }
+
+        HostRequirement[] disjoint =
+        [
+            Requirement(product: "Venus series"),
+            Requirement(systemVersion: "1.1"),
+            Requirement(family: "Venus"),
+            Requirement(board: "F7BSW"),
+            Requirement(boardVersion: "1.1"),
+            Requirement(sku: "MGF7BSW"),
+            Requirement(ecVersions: [new(1, 5), new(0, 6)]),
+        ];
+        foreach (HostRequirement other in disjoint)
+        {
+            False(exact.Overlaps(other));
+            False(other.Overlaps(exact));
         }
     }
 
@@ -264,26 +346,86 @@ internal static class Program
 
     private static void AllProfilesEnableNormalControl()
     {
-        foreach (SupportedHost supported in SupportedHosts)
+        foreach (SupportedHost supported in HostsWithBiosMetadata())
         {
             F7PlatformProfile profile = F7ProfileCatalog.Get(supported.ProfileId);
             FakeTransport transport = new(profile, selector: 0xb1);
             PawnIoF7bsdBackend backend = CreateBackend(supported.Host, transport);
 
-            backend.Initialize();
+            F7bsdStartupRecovery recovery = backend.Initialize();
+            Equal(supported.Host, recovery.Host);
             True(backend.IsInitialized);
+            Equal<byte?>(null, backend.ActiveSystemCode);
             Equal(0, transport.WriteAttempts);
 
             Equal((byte)19, backend.SetCpu(19));
             Equal((byte)19, backend.SetSystem(19));
+            Equal<byte?>(19, backend.ActiveSystemCode);
             backend.ResetCpu();
             backend.ResetSystem();
+            Equal<byte?>(null, backend.ActiveSystemCode);
             True(transport.WriteAttempts > 0);
 
             backend.Dispose();
             False(backend.IsInitialized);
+            Equal<byte?>(null, backend.ActiveSystemCode);
             True(transport.Disposed);
         }
+    }
+
+    private static void SystemDiagnosticsCoalesce()
+    {
+        ManualTimeProvider clock = new();
+        SystemControlDiagnostics diagnostics = new(clock);
+        Equal<string?>(null, diagnostics.Observe(20, 51, 3500));
+        clock.Advance(1);
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3500));
+        clock.Advance(1);
+        Equal<string?>(null, diagnostics.Observe(30, 51, 3500));
+        clock.Advance(2);
+        string message = diagnostics.Observe(30, 51, 3500) ??
+            throw new InvalidOperationException("Expected stable target diagnostic.");
+        True(message.Contains("30/51", StringComparison.Ordinal));
+        True(message.Contains("3500 RPM", StringComparison.Ordinal));
+        True(message.Contains("accepted and read back", StringComparison.Ordinal));
+
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3480));
+        clock.Advance(2);
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3480));
+        clock.Advance(3);
+        True(diagnostics.Observe(25, 51, 3480) is not null);
+        clock.Advance(60);
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3500));
+
+        Equal<string?>(null, diagnostics.Observe(null, 51, 3500));
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3500));
+        clock.Advance(2);
+        True(diagnostics.Observe(25, 51, 3500) is not null);
+
+        diagnostics.Clear();
+        Equal<string?>(null, diagnostics.Observe(25, 51, 3500));
+        clock.Advance(2);
+        True(diagnostics.Observe(25, 51, 3500) is not null);
+    }
+
+    private static void SystemDiagnosticsFailure()
+    {
+        F7PlatformProfile profile = F7ProfileCatalog.Get("f7bsd");
+        FakeTransport transport = new(profile, selector: 0xb1);
+        PawnIoF7bsdBackend backend = CreateBackend(F7bsdHost(), transport);
+        backend.Initialize();
+        Equal((byte)20, backend.SetSystem(20));
+        Equal<byte?>(20, backend.ActiveSystemCode);
+        transport.FailNextWrite = true;
+        Throws<IOException>(() => backend.SetSystem(25));
+        Equal<byte?>(null, backend.ActiveSystemCode);
+
+        Equal((byte)20, backend.SetSystem(20));
+        transport.FailNextWrite = true;
+        Throws<AggregateException>(backend.Dispose);
+        Equal<byte?>(null, backend.ActiveSystemCode);
+        backend.Dispose();
+        True(transport.Disposed);
     }
 
     private static void CorruptPolicyBlocksRecovery()
@@ -607,6 +749,19 @@ internal static class Program
                 return transport;
             });
 
+    private static IEnumerable<SupportedHost> HostsWithBiosMetadata() =>
+        SupportedHosts.SelectMany(supported => new[]
+        {
+            supported.Host.BiosVersion,
+            "1.10",
+            "1.9",
+            "future BIOS",
+            string.Empty,
+        }.Select(biosVersion => supported with
+        {
+            Host = supported.Host with { BiosVersion = biosVersion },
+        }));
+
     private static byte[] BuildCpuSnapshot(ExpectedCpu cpu) =>
     [
         cpu.Selector,
@@ -736,6 +891,18 @@ internal static class Program
     private sealed record SupportedHost(
         string ProfileId,
         HostIdentitySnapshot Host);
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => timestamp;
+
+        internal void Advance(int seconds) =>
+            timestamp += TimeSpan.FromSeconds(seconds).Ticks;
+    }
 
     private sealed class FakeTransport : IF7Transport
     {

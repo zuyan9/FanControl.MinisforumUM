@@ -22,7 +22,6 @@ internal sealed record HostIdentitySnapshot(
 
 internal sealed class HostRequirement
 {
-    private readonly string[] biosVersions;
     private readonly EcVersion[] ecVersions;
 
     internal HostRequirement(
@@ -31,7 +30,6 @@ internal sealed class HostRequirement
         string? family,
         string board,
         string boardVersion,
-        string[] biosVersions,
         EcVersion[] ecVersions,
         string? sku = null)
     {
@@ -40,7 +38,6 @@ internal sealed class HostRequirement
         Family = family;
         Board = board;
         BoardVersion = boardVersion;
-        this.biosVersions = (string[])biosVersions.Clone();
         this.ecVersions = (EcVersion[])ecVersions.Clone();
         Sku = sku;
 
@@ -49,8 +46,6 @@ internal sealed class HostRequirement
             (Family is not null && string.IsNullOrWhiteSpace(Family)) ||
             string.IsNullOrWhiteSpace(Board) ||
             string.IsNullOrWhiteSpace(BoardVersion) ||
-            this.biosVersions.Length == 0 ||
-            this.biosVersions.Any(string.IsNullOrWhiteSpace) ||
             this.ecVersions.Length == 0 ||
             (Sku is not null && string.IsNullOrWhiteSpace(Sku)))
         {
@@ -82,7 +77,6 @@ internal sealed class HostRequirement
             StringComparison.Ordinal)) &&
         string.Equals(actual.Board, Board, StringComparison.Ordinal) &&
         string.Equals(actual.BoardVersion, BoardVersion, StringComparison.Ordinal) &&
-        biosVersions.Contains(actual.BiosVersion, StringComparer.Ordinal) &&
         ecVersions.Contains(actual.EcVersion) &&
         (Sku is null || string.Equals(actual.Sku, Sku, StringComparison.Ordinal));
 
@@ -93,7 +87,6 @@ internal sealed class HostRequirement
         string.Equals(Board, other.Board, StringComparison.Ordinal) &&
         string.Equals(BoardVersion, other.BoardVersion, StringComparison.Ordinal) &&
         Compatible(Sku, other.Sku) &&
-        biosVersions.Intersect(other.biosVersions, StringComparer.Ordinal).Any() &&
         ecVersions.Intersect(other.ecVersions).Any();
 
     private static bool Compatible(string? first, string? second) =>
@@ -403,7 +396,6 @@ internal static class F7ProfileCatalog
                 null,
                 "F7BSD",
                 "1.1",
-                ["1.06"],
                 [(0, 8)])],
             ExactRevision02Pnp,
             ExactRevision02Controller,
@@ -419,7 +411,6 @@ internal static class F7ProfileCatalog
                 null,
                 "F7BSH",
                 "1.1",
-                ["1.06"],
                 [(0, 8)])],
             ExactRevision02Pnp,
             ExactRevision02Controller,
@@ -435,7 +426,6 @@ internal static class F7ProfileCatalog
                 null,
                 "F7BSC",
                 "Default string",
-                ["1.07", "1.09"],
                 [(2, 6)])],
             RevisionAgnosticPnp,
             RevisionAgnosticController,
@@ -452,7 +442,6 @@ internal static class F7ProfileCatalog
                     "EliteMini",
                     "F7BSI",
                     "1.0",
-                    ["1.08"],
                     [(0, 5)],
                     "MGF7BSI"),
                 Host(
@@ -461,7 +450,6 @@ internal static class F7ProfileCatalog
                     null,
                     "F7BSW",
                     "1.0",
-                    ["1.01"],
                     [(0, 5)]),
             ],
             RevisionAgnosticPnp,
@@ -479,7 +467,6 @@ internal static class F7ProfileCatalog
                     null,
                     "HPBSD",
                     "1.0",
-                    ["1.06"],
                     [(0, 1), (0, 2)]),
             ],
             RevisionAgnosticPnp,
@@ -543,7 +530,6 @@ internal static class F7ProfileCatalog
         string? family,
         string board,
         string boardVersion,
-        string[] biosVersions,
         (int Major, int Minor)[] ecVersions,
         string? sku = null) => new(
             product,
@@ -551,7 +537,6 @@ internal static class F7ProfileCatalog
             family,
             board,
             boardVersion,
-            biosVersions,
             ecVersions.Select(item => new EcVersion(item.Major, item.Minor)).ToArray(),
             sku);
 }

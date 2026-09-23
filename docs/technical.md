@@ -23,17 +23,24 @@ Every admitted profile exposes the same six endpoints:
 
 ## Profiles and exact host gates
 
-Compatibility is authorized by an exact host and firmware tuple, a
+Compatibility is authorized by an exact host and EC-version tuple, a
 profile-specific controller signature, and exact policy-table fingerprints.
 Vendor package model mappings alone never authorize EC access.
 
-| Profile | Exact host/firmware gate | Model mappings | System code | Access |
+| Profile | Exact host/EC gate | Model mappings | System code | Access |
 |---|---|---|---|---|
-| `f7bsd` | `Venus series`, `F7BSD` rev `1.1`, BIOS `1.06`, EC `0.8` | UM780 XTX; UM790 XTX | `0..51` | Telemetry and controls |
-| `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, BIOS `1.06`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
-| `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, BIOS `1.07` or `1.09`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
-| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, BIOS `1.08`, EC `0.5`; or `F7BSW` rev `1.0`, BIOS `1.01`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
-| `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, BIOS `1.06`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
+| `f7bsd` | `Venus series`, `F7BSD` rev `1.1`, EC `0.8` | UM780 XTX; UM790 XTX | `0..51` | Telemetry and controls |
+| `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
+| `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
+| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, EC `0.5`; or `F7BSW` rev `1.0`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
+| `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
+
+BIOS version is optional diagnostic metadata. It does not select a profile,
+authorize access, or distinguish overlapping host requirements. The
+[supported-systems table](../README.md#supported-systems) records BIOS versions
+examined so far; an unlisted or missing BIOS version alone does not reject a
+matching host. Passing the runtime checks is not proof that every firmware
+routine or BIOS interaction is unchanged.
 
 All other machines are unsupported. A listed profile exposes telemetry and
 controls normally only after every profile check passes; there are no
@@ -43,8 +50,8 @@ rejects a mismatch as soon as it can be detected.
 
 ## Evidence and validation limits
 
-UM780 XTX and UM880 Plus have been live write-tested with the firmware listed
-above.
+UM780 XTX and UM880 Plus have been live write-tested with the BIOS and EC
+combinations recorded in the README.
 The UM790 XTX is included because Minisforum publishes one identical full
 BIOS/EC image for both XTX models, but it still needs live validation. The
 remaining models rely on offline firmware analysis and public DMI evidence.
@@ -52,6 +59,13 @@ remaining models rely on offline firmware analysis and public DMI evidence.
 Validation of one machine does not cover other models or firmware revisions.
 Additional profile evidence and limits:
 
+- F7BSI BIOS `1.09` contains the same 128 KiB EC candidate window as `1.08`,
+  at image offsets `0x00000..0x1ffff`, SHA-256
+  `05a976553a3e7d71fb6d313bb74c638241e7da8dc7590b1d75b1ab6898f187cc`.
+  This is evidence for those two vendor packages, not a live firmware hash.
+  The system-fan behavior reported in
+  [issue #14](https://github.com/zuyan9/FanControl.MinisforumUM/issues/14)
+  remains unresolved.
 - No live controller identity has been recorded for F7BSH or F7BSW.
 - The HPBSD package conflicts between EC `0.1` and the advertised EC `0.2`, so
   both values are compiled as explicit alternatives.
@@ -92,6 +106,31 @@ Fan Control percentages map linearly to each profile's EC target-code range.
 CPU targets and all non-HPBSD system targets use `0..51`, nominally
 `0..5100 RPM`. HPBSD system targets use `0..40`; `100%` therefore writes code
 `40`, not `51`.
+
+These are requested target codes, not guaranteed physical fan speeds. Successful
+target and ownership readback does not establish that the fan reached that RPM;
+the tachometer reports the measured speed separately.
+
+Offline tracing of the identical F7BSI `1.08`/`1.09` EC candidate window found:
+
+- The system selector at image offset `0x9eee` uses the override at XDATA
+  `0x888b`. An override of `0xff` bypasses its temperature bands and preserves
+  the host target at `0x8885` (native I2EC `0x0885`).
+- The tachometer path at `0x9f2a`, with helper `0xa437`, uses the same
+  `2,156,250 / counter` conversion as the plugin.
+- The feedback path at `0x9f67` compares measured RPM with `target * 100`,
+  allowing a `100 RPM` margin. Above that margin it decrements the system PWM
+  duty register at `0x1804` while nonzero; no `3500 RPM` floor appears in this
+  path. A zero target clears duty in the service routine at `0xa02e`.
+
+This static trace does not establish the physical fan's minimum/maximum speed,
+PWM wiring, or whether that path is active on the reporting machine. A plateau
+near `3500 RPM` only at high targets could be physical saturation. The same
+plateau at a verified lower target needs target, ownership, PWM-duty, and
+tachometer observations to distinguish controller behavior from fan response.
+The plugin's diagnostic log pairs the last verified accepted system code with
+a later RPM sample; it does not add PWM reads or independently verify the state
+again at log time.
 
 F7BSI and F7BSW still use `0..51` even though their stored system table tops
 out at `40`: the active firmware selector independently hardcodes `51` for its

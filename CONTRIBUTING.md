@@ -49,16 +49,17 @@ Nullable analysis and warnings-as-errors are enabled in both projects.
 ## Hardware safety
 
 Always run the hardware-free harness before a live test. Live EC testing is not
-a routine validation step and must use an exact supported board, BIOS, EC, and
-controller profile. See [Supported systems](README.md#supported-systems) for
-current validation status. Validation of one host does not validate other
-models or firmware.
+a routine validation step and must use an exact supported board/revision, EC
+version, and controller profile. BIOS version is recorded for diagnostics and
+validation history, not enforced as an admission check. See
+[Supported systems](README.md#supported-systems) for current validation status.
+Validation of one host does not validate other models or firmware.
 
 For every live test:
 
 - Stop every other EC-writing or fan-control utility first. Never run two EC
   writers concurrently.
-- Preserve all exact host, firmware, controller-signature, and table-fingerprint
+- Preserve all exact host, EC-version, controller-signature, and table-fingerprint
   gates. Keep writes bounded to the profile's validated values.
 - Verify that disabling controls and closing Fan Control normally restores the
   selected BIOS CPU table and returns the system fan to firmware control.

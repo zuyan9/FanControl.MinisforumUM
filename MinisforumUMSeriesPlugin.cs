@@ -15,6 +15,7 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
         "System Temperature");
     private readonly ControlSensor cpuControl;
     private readonly ControlSensor systemControl;
+    private readonly SystemControlDiagnostics systemDiagnostics = new();
     private PawnIoF7bsdBackend? backend;
 
     public MinisforumUMSeriesPlugin()
@@ -101,7 +102,16 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
             {
                 if (backend is not null)
                 {
-                    Apply(backend.ReadTelemetry());
+                    F7bsdTelemetry telemetry = backend.ReadTelemetry();
+                    Apply(telemetry);
+                    string? diagnostic = systemDiagnostics.Observe(
+                        backend.ActiveSystemCode,
+                        backend.ActiveProfile.SystemMaximumCode,
+                        telemetry.SystemFanRpm);
+                    if (diagnostic is not null)
+                    {
+                        Log(diagnostic);
+                    }
                 }
             }
             catch (Exception exception)
@@ -132,6 +142,7 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
 
             cpuControl.Clear();
             systemControl.Clear();
+            systemDiagnostics.Clear();
             ClearTelemetry();
         }
     }
@@ -162,7 +173,14 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
 
     private void ResetCpu() => Reset(static active => active.ResetCpu());
 
-    private void ResetSystem() => Reset(static active => active.ResetSystem());
+    private void ResetSystem()
+    {
+        lock (lifecycleSync)
+        {
+            backend?.ResetSystem();
+            systemDiagnostics.Clear();
+        }
+    }
 
     private void Reset(Action<PawnIoF7bsdBackend> reset)
     {
@@ -237,7 +255,7 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
             ? "no startup recovery needed"
             : "startup recovery: " + string.Join(", ", recovered);
         return $"Minisforum {recovery.ProfileName} initialized " +
-            $"({profile}; controls enabled; {detail}).";
+            $"({recovery.Host}; {profile}; controls enabled; {detail}).";
     }
 
     private sealed class Sensor(string id, string name) : IPluginSensor
@@ -280,5 +298,52 @@ public sealed class MinisforumUMSeriesPlugin : IPlugin2
         public void Update() { }
 
         internal void Clear() => Value = null;
+    }
+}
+
+internal sealed class SystemControlDiagnostics(TimeProvider? timeProvider = null)
+{
+    private static readonly TimeSpan StableDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MinimumInterval = TimeSpan.FromSeconds(5);
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+    private byte? observedCode;
+    private byte? reportedCode;
+    private long changedAt;
+    private long? reportedAt;
+
+    internal string? Observe(byte? code, byte maximumCode, int sampledRpm)
+    {
+        if (!code.HasValue)
+        {
+            Clear();
+            return null;
+        }
+
+        long now = clock.GetTimestamp();
+        if (observedCode != code)
+        {
+            observedCode = code;
+            changedAt = now;
+        }
+        if (reportedCode == code ||
+            clock.GetElapsedTime(changedAt, now) < StableDelay ||
+            (reportedAt.HasValue &&
+                clock.GetElapsedTime(reportedAt.Value, now) < MinimumInterval))
+        {
+            return null;
+        }
+
+        reportedCode = code;
+        reportedAt = now;
+        return $"Minisforum system target code {code.Value}/{maximumCode} " +
+            "was accepted and read back with the raw handoff verified; " +
+            $"latest sampled speed is {sampledRpm} RPM.";
+    }
+
+    internal void Clear()
+    {
+        observedCode = null;
+        reportedCode = null;
+        reportedAt = null;
     }
 }
