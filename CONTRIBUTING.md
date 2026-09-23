@@ -108,8 +108,13 @@ requests targeting `master`. Non-release runs use version
    `FanControl.MinisforumUMSeries.dll`; and
 6. uploads that ZIP as a workflow artifact.
 
-To publish a release, manually run **Build and release** from `master` and enter
-an unused `X.Y.Z` version without a leading `v`. The workflow rejects other
-branches and invalid versions, performs the same build and verification, checks
-that `vX.Y.Z` is unused, and then creates the GitHub release with the plugin ZIP
-and generated release notes.
+To publish, manually run **Build and release**, select a branch, and enter an
+unused version without a leading `v` or build metadata:
+
+- Stable versions such as `0.2.3` must run from `master`.
+- Prerelease versions such as `0.2.3-beta.1` or `0.2.3-rc.1` can run from any
+  branch. They are marked as GitHub prereleases and never marked as **Latest**.
+
+The workflow performs the same build and verification, checks that `v<version>`
+is unused, and creates the GitHub release with the plugin ZIP and generated
+release notes.

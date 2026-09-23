@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without "v" (for example, 0.2.0)
+        description: Release version without "v" (for example, 0.2.3 or 0.2.3-beta.1)
         required: true
         type: string
 
@@ -25,6 +25,7 @@ jobs:
     runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
       - name: Check out repository
@@ -42,14 +43,20 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
         run: |
           if ($env:EVENT_NAME -eq "workflow_dispatch") {
-              $defaultRef = "refs/heads/$env:DEFAULT_BRANCH"
-              if ($env:WORKFLOW_REF -ne $defaultRef) {
-                  throw "Releases must run from the default branch ($env:DEFAULT_BRANCH)."
+              $version = $env:REQUESTED_VERSION.Trim()
+              $number = '(0|[1-9][0-9]*)'
+              $identifier = '(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+              $versionPattern = "\A$number\.$number\.$number(-$identifier(\.$identifier)*)?\z"
+              if ($version -notmatch $versionPattern) {
+                  throw "Version must use X.Y.Z or X.Y.Z-prerelease syntax (for example, 0.2.3-beta.1), without a leading v or build metadata."
               }
 
-              $version = $env:REQUESTED_VERSION.Trim()
-              if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-                  throw "Version must use X.Y.Z syntax without a leading v."
+              if (-not $env:WORKFLOW_REF.StartsWith('refs/heads/')) {
+                  throw "Releases must run from a branch."
+              }
+              $defaultRef = "refs/heads/$env:DEFAULT_BRANCH"
+              if (-not $version.Contains('-') -and $env:WORKFLOW_REF -cne $defaultRef) {
+                  throw "Stable releases must run from the default branch ($env:DEFAULT_BRANCH). Use a prerelease version on other branches."
               }
           }
           else {
@@ -59,6 +66,8 @@ jobs:
           "PLUGIN_VERSION=$version" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "version=$version" |
+              Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" |
               Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Set up .NET
@@ -175,6 +184,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TARGET: ${{ github.sha }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
           $releaseTag = "v$env:RELEASE_VERSION"
           $escapedTag = [Uri]::EscapeDataString($releaseTag)
@@ -194,9 +204,18 @@ jobs:
               throw "Could not verify that tag $releaseTag is unused (HTTP $($response.StatusCode))."
           }
 
-          gh release create $releaseTag `
-              .\release-assets\FanControl.MinisforumUMSeries.zip `
-              --repo $env:GH_REPO `
-              --target $env:RELEASE_TARGET `
-              --title $releaseTag `
-              --generate-notes
+          $releaseArgs = @(
+              'release', 'create', $releaseTag,
+              '.\release-assets\FanControl.MinisforumUMSeries.zip',
+              '--repo', $env:GH_REPO,
+              '--target', $env:RELEASE_TARGET,
+              '--title', $releaseTag,
+              '--generate-notes'
+          )
+          if ($env:RELEASE_PRERELEASE -eq 'true') {
+              $releaseArgs += '--prerelease', '--latest=false'
+          }
+          gh @releaseArgs
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub release creation failed (exit code $LASTEXITCODE)."
+          }
