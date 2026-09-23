@@ -10,18 +10,26 @@ raw EC temperatures, and independent CPU and system fan controls.
 
 ## Supported systems
 
-| Models | Required firmware | Validation |
-|---|---|---|
-| UM780 XTX | BIOS `1.06`, EC `0.8` | Live write-tested |
-| UM790 XTX | BIOS `1.06`, EC `0.8` | Shared vendor image; not live-tested |
-| UM690 Pro | BIOS `1.06`, EC `0.8` | Firmware-derived |
-| UM760 Pro, UM780 Pro, UM790 Pro | BIOS `1.07` or `1.09`, EC `2.6` | Firmware-derived |
-| UM760 Slim, UM870 Slim | BIOS `1.08`, EC `0.5` | Firmware-derived |
-| UM760 Plus, UM870 Plus | BIOS `1.01`, EC `0.5` | Firmware-derived |
-| UM880 Plus | BIOS `1.01`, EC `0.5` | Live write-tested |
-| UM880 Pro, UM890 Pro | BIOS `1.06`, EC `0.1` or `0.2` | Firmware-derived |
+| Models | Required EC | BIOS versions examined | Validation |
+|---|---|---|---|
+| UM780 XTX | `0.8` | `1.06` | Live write-tested |
+| UM790 XTX | `0.8` | `1.06` | Shared vendor image; not live-tested |
+| UM690 Pro | `0.8` | `1.06` | Firmware-derived |
+| UM760 Pro, UM780 Pro, UM790 Pro | `2.6` | `1.07`, `1.09` | Firmware-derived |
+| UM760 Slim, UM870 Slim | `0.5` | `1.08`, `1.09` | Firmware-derived |
+| UM760 Plus, UM870 Plus | `0.5` | `1.01` | Firmware-derived |
+| UM880 Plus | `0.5` | `1.01` | Live write-tested |
+| UM880 Pro, UM890 Pro | `0.1` or `0.2` | `1.06` | Firmware-derived |
 
-All other systems are unsupported. The plugin refuses to load on a mismatch.
+BIOS versions are recorded for reference and do not restrict loading. The plugin
+requires an exact supported board/revision and EC version, then checks the live
+controller, fan tables, and ownership state. Other BIOS releases can load when
+these checks pass, but have not necessarily been validated. Other board and EC
+combinations remain unsupported.
+
+The UM760 Slim system-fan behavior reported in
+[issue #14](https://github.com/zuyan9/FanControl.MinisforumUM/issues/14) still
+needs hardware validation.
 
 > [!TIP]
 > Checkout [FanControl.MinisforumM1Pro](https://github.com/zuyan9/FanControl.MinisforumM1Pro) for Minisforum M1 Pro and M1 Lite.

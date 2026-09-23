@@ -39,6 +39,10 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 
     internal bool IsInitialized => startupRecovery.HasValue;
 
+    internal byte? ActiveSystemCode => IsInitialized && !systemRestorePending
+        ? systemCode
+        : null;
+
     internal F7PlatformProfile ActiveProfile => profile ??
         throw new InvalidOperationException("The platform profile is unavailable.");
 
@@ -111,6 +115,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
                 "system-fan policy"));
 
         F7bsdStartupRecovery result = new(
+            host,
             selected.DisplayName,
             cpuState.Selector,
             recoveredCpu,
@@ -615,6 +620,7 @@ internal sealed class PawnIoF7bsdBackend : IDisposable
 }
 
 internal readonly record struct F7bsdStartupRecovery(
+    HostIdentitySnapshot Host,
     string ProfileName,
     byte CpuSelector,
     bool CpuRecovered,

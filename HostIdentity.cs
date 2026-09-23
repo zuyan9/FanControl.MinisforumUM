@@ -14,7 +14,7 @@ internal static class HostIdentity
         ReadOptionalString("SystemFamily"),
         ReadRequiredString("BaseBoardProduct"),
         ReadRequiredString("BaseBoardVersion"),
-        ReadRequiredString("BIOSVersion"),
+        ReadOptionalString("BIOSVersion"),
         ReadRequiredByte("ECFirmwareMajorRelease"),
         ReadRequiredByte("ECFirmwareMinorRelease"));
 
