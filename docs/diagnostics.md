@@ -5,8 +5,9 @@
    **MinisforumFanDiagnostics.exe**. Accept the administrator prompt and let it finish.
 3. Share the generated **MinisforumFanDiagnostics-*.log** and say whether the fan noise changed.
 
-The test takes a few minutes: firmware baseline, targets of **100%, 70%, 40%**,
-then firmware restoration. **Ctrl+C** stops early and runs cleanup; keep the window
+The test takes about nine minutes: firmware baseline, then **100%, 80%, 60%, 50%,
+40%, 30%, 20%, 10%** for one minute each, followed by firmware restoration.
+**Ctrl+C** stops early and runs cleanup; keep the window
 open until cleanup finishes. The tool uses all board/EC profiles supported by the
 plugin. Unrecognized hardware is reported before EC access.
 
@@ -22,9 +23,9 @@ Run from a terminal in the Fan Control folder:
 .\MinisforumFanDiagnostics.exe --help
 ```
 
-The percentage selects a target within the model's supported range, not a measured 
+The percentage selects a target within the model's supported range, not a measured
 PWM duty. `--fancontrol-dir` selects a portable installation; `--output` selects a
-new log file. The tool uses the .NET 10 runtime required by Fan Control;PawnIO must
+new log file. The tool uses the .NET 10 runtime required by Fan Control; PawnIO must
 already be installed through Fan Control.
 
 ## What is collected
@@ -32,7 +33,13 @@ already be installed through Fan Control.
 - Board, BIOS/EC version, controller identity, selected profile, and any startup recovery.
 - Live target/ownership, PWM duty, raw tach bytes, RPM and raw temperatures every two seconds.
 - Raw PWM clock, enable, polarity, pin/tach selection and fan tables before and after the test.
-- Stage summaries, errors, cancellation, and the restoration result.
+- Whole-stage ranges and actual duration, plus final-ten-second median RPM,
+  RPM/PWM ranges and sample counts; errors, cancellation, and the restoration result.
+
+The final window uses the stage's last ten seconds (or the requested hold time
+when shorter). Unstable tach readings are excluded from RPM statistics; their PWM
+readings are retained. Missing valid RPM data is reported as `unknown`. An empty
+window after a long pause is reported with zero samples, rather than reusing old data.
 
 Each target is written once through the existing guarded backend, then observed.
 Other fan control or EC utilities must be closed too.
@@ -49,7 +56,9 @@ repair an exact interrupted CPU or system control state, as the plugin already d
 
 Cleanup failures are reported and cause a failed exit. If restoration is not
 verified, fully power off before another attempt. Forced process termination or
-power loss cannot run normal cleanup. No target machine was available for live testing.
+power loss cannot run normal cleanup. The earlier three-target sweep and cancellation
+cleanup were tested on a UM780, F7BSD rev 1.1, BIOS 1.06, EC 0.8. The expanded sweep
+and final-window summaries still need live validation.
 
 ## Build
 

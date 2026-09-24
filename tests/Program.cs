@@ -140,6 +140,10 @@ internal static class Program
             ("system trace does not add writable addresses", SystemTraceWriteAllowlist),
             ("system debug sweeps supported profiles and restores firmware", SystemDebugSweep),
             ("system debug single target uses the profile maximum", SystemDebugSingleTarget),
+            ("system debug final window excludes transients and unstable tach", SystemDebugFinalWindow),
+            ("system debug short window includes zero RPM and averages the median", SystemDebugShortFinalWindow),
+            ("system debug final window reports unknown for unstable tach", SystemDebugInvalidFinalWindow),
+            ("system debug final window uses read timestamps and actual duration", SystemDebugFinalWindowTiming),
             ("system debug cancellation restores firmware", SystemDebugCancellation),
             ("system debug sample failure aborts later stages", SystemDebugReadFailure),
             ("system debug live target drift aborts later stages", SystemDebugTargetDrift),
@@ -798,6 +802,7 @@ internal static class Program
 
     private static void SystemDebugSweep()
     {
+        Equal(60, new SystemFanDebugOptions().HoldSeconds);
         foreach (SupportedHost supported in SupportedHosts)
         {
             DebugFixture fixture = new(supported);
@@ -814,22 +819,26 @@ internal static class Program
             session.Run(new(5), CancellationToken.None);
             byte maximum = fixture.Transport.Profile.SystemMaximumCode;
             SequenceEqual(
-                new[]
-                {
-                    maximum,
-                    F7bsdProfile.ToCode(70, maximum),
-                    F7bsdProfile.ToCode(40, maximum),
-                    maximum,
-                },
+                maximum == 40
+                    ? new byte[] { 40, 32, 24, 20, 16, 12, 8, 4, 40 }
+                    : [51, 41, 31, 26, 20, 15, 10, 5, 51],
                 fixture.TargetWrites());
+            SequenceEqual(
+                new[] { 100, 80, 60, 50, 40, 30, 20, 10 }.Select(percent =>
+                    $"target-{percent}"),
+                fixture.Messages.Where(message => message.StartsWith(
+                    "Summary stage=target-", StringComparison.Ordinal))
+                    .Select(message => message["Summary stage=".Length..message.IndexOf(':')]));
             SequenceEqual(
                 new byte[] { 0xff, 0 },
                 fixture.Transport.WriteBatches.SelectMany(batch => batch)
                     .Where(write => write.Address == F7bsdProfile.SystemTemperatureOverrideAddress)
                     .Select(write => write.Value));
-            Equal(6, fixture.Transport.WriteAttempts);
-            Equal(27, fixture.Transport.ReadBatches.Count(batch =>
+            Equal(11, fixture.Transport.WriteAttempts);
+            Equal(47, fixture.Transport.ReadBatches.Count(batch =>
                 batch.SequenceEqual(SystemFanTrace.Addresses)));
+            Equal(10, fixture.Messages.Count(message =>
+                message.StartsWith("Final window stage=", StringComparison.Ordinal)));
             fixture.AssertRestored();
         }
     }
@@ -849,6 +858,185 @@ internal static class Program
             SequenceEqual(code == 40 ? new byte[] { code } : [code, 40], fixture.TargetWrites());
             fixture.AssertRestored();
         }
+    }
+
+    private static void SystemDebugFinalWindow()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        int targetSamples = 0;
+        fixture.Transport.AfterRead = (addresses, values) =>
+        {
+            if (!addresses.SequenceEqual(SystemFanTrace.Addresses) ||
+                !fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                return;
+            }
+
+            int index = targetSamples++;
+            // The stage samples at 0, 2, ... 20 seconds. The sample at
+            // exactly 10 seconds belongs to the final window.
+            if (index < 5)
+            {
+                SetDebugObservation(values, counter: 50, stable: true, 200, 201);
+            }
+            else
+            {
+                ushort counter = index switch
+                {
+                    5 => 2_000,
+                    6 => 500,
+                    _ => 1_000,
+                };
+                SetDebugObservation(values, counter, stable: index < 8,
+                    (byte)(index * 2), (byte)(index * 2 + 1));
+            }
+        };
+
+        fixture.Session().Run(new(20, 100), CancellationToken.None);
+        Equal(11, targetSamples);
+        string summary = fixture.Messages.Single(message => message.StartsWith(
+            "Summary stage=target-100:", StringComparison.Ordinal));
+        True(summary.Contains("duration=20.0s", StringComparison.Ordinal));
+        True(summary.Contains("samples=11;", StringComparison.Ordinal));
+        True(summary.Contains("pwm2-range=10..201;", StringComparison.Ordinal));
+        True(summary.Contains("rpm-range=1078..43125.", StringComparison.Ordinal));
+        Equal(
+            "Final window stage=target-100: window=10.0s; samples=6; " +
+            "valid-rpm-samples=3; rpm-median=2156; rpm-range=1078..4312; pwm2-range=10..21.",
+            fixture.Messages.Single(message => message.StartsWith(
+                "Final window stage=target-100:", StringComparison.Ordinal)));
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugShortFinalWindow()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        int targetSamples = 0;
+        fixture.Transport.AfterRead = (addresses, values) =>
+        {
+            if (addresses.SequenceEqual(SystemFanTrace.Addresses) &&
+                fixture.Backend.ActiveSystemCode.HasValue)
+            {
+                int index = targetSamples++;
+                SetDebugObservation(values, index == 0 ? (ushort)0 : (ushort)4_000,
+                    stable: index < 2, (byte)(10 + index), (byte)(9 + index));
+            }
+        };
+
+        System.Globalization.CultureInfo previous = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new("fr-FR");
+            fixture.Session().Run(new(5, 100), CancellationToken.None);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+
+        Equal(4, targetSamples);
+        True(fixture.Messages.Single(message => message.StartsWith(
+            "Summary stage=target-100:", StringComparison.Ordinal))
+            .Contains("duration=5.0s", StringComparison.Ordinal));
+        Equal(
+            "Final window stage=target-100: window=5.0s; samples=4; " +
+            "valid-rpm-samples=2; rpm-median=269.5; rpm-range=0..539; pwm2-range=9..13.",
+            fixture.Messages.Single(message => message.StartsWith(
+                "Final window stage=target-100:", StringComparison.Ordinal)));
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugInvalidFinalWindow()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        DebugFixture fixture = new();
+        fixture.Transport.AfterRead = (addresses, values) =>
+        {
+            if (addresses.SequenceEqual(SystemFanTrace.Addresses))
+            {
+                SetDebugObservation(values, counter: 500, stable: false, 42, 45);
+            }
+        };
+
+        fixture.Session().Run(new(5, 100), CancellationToken.None);
+        Equal(
+            "Final window stage=target-100: window=5.0s; samples=4; " +
+            "valid-rpm-samples=0; rpm-median=unknown; rpm-range=unknown..unknown; pwm2-range=42..45.",
+            fixture.Messages.Single(message => message.StartsWith(
+                "Final window stage=target-100:", StringComparison.Ordinal)));
+        fixture.AssertRestored();
+    }
+
+    private static void SystemDebugFinalWindowTiming()
+    {
+        if (!SystemFanTrace.Enabled)
+        {
+            return;
+        }
+
+        foreach (bool stallDuringRead in new[] { true, false })
+        {
+            DebugFixture fixture = new();
+            int targetSamples = 0;
+            fixture.Transport.AfterRead = (addresses, values) =>
+            {
+                if (addresses.SequenceEqual(SystemFanTrace.Addresses) &&
+                    fixture.Backend.ActiveSystemCode.HasValue)
+                {
+                    targetSamples++;
+                    SetDebugObservation(values, counter: 500, stable: true, 42, 45);
+                    if (stallDuringRead)
+                    {
+                        fixture.Clock.Advance(30);
+                    }
+                }
+            };
+            fixture.Session(afterLog: message =>
+            {
+                if (!stallDuringRead && message.StartsWith(
+                    "stage=target-100;", StringComparison.Ordinal))
+                {
+                    fixture.Clock.Advance(30);
+                }
+            }).Run(new(20, 100), CancellationToken.None);
+
+            Equal(1, targetSamples);
+            True(fixture.Messages.Single(message => message.StartsWith(
+                "Summary stage=target-100:", StringComparison.Ordinal))
+                .Contains("duration=30.0s", StringComparison.Ordinal));
+            Equal(
+                "Final window stage=target-100: window=10.0s; " +
+                (stallDuringRead
+                    ? "samples=1; valid-rpm-samples=1; rpm-median=4312; rpm-range=4312..4312; pwm2-range=42..45."
+                    : "samples=0; valid-rpm-samples=0; rpm-median=unknown; rpm-range=unknown..unknown; pwm2-range=unknown..unknown."),
+                fixture.Messages.Single(message => message.StartsWith(
+                    "Final window stage=target-100:", StringComparison.Ordinal)));
+            fixture.AssertRestored();
+        }
+    }
+
+    private static void SetDebugObservation(
+        byte[] values, ushort counter, bool stable, byte dutyBefore, byte dutyAfter)
+    {
+        values[3] = dutyBefore;
+        values[19] = dutyAfter;
+        values[4] = (byte)counter;
+        values[5] = (byte)(counter >> 8);
+        values[6] = stable ? values[4] : (byte)(values[4] ^ 1);
     }
 
     private static void SystemDebugCancellation()
@@ -1500,7 +1688,6 @@ internal static class Program
     {
         private readonly byte[] cpuBaseline;
         private readonly byte[] policyBaseline;
-        private readonly ManualTimeProvider clock = new();
 
         internal DebugFixture(SupportedHost? supported = null)
         {
@@ -1521,18 +1708,25 @@ internal static class Program
 
         internal List<string> Messages { get; } = [];
 
+        internal ManualTimeProvider Clock { get; } = new();
+
         internal SystemFanDebugSession Session(
             Action? assertExclusive = null,
-            Action<CancellationToken>? beforeWait = null) => new(
+            Action<CancellationToken>? beforeWait = null,
+            Action<string>? afterLog = null) => new(
                 Backend,
-                Messages.Add,
+                message =>
+                {
+                    Messages.Add(message);
+                    afterLog?.Invoke(message);
+                },
                 assertExclusive,
-                clock,
+                Clock,
                 (delay, cancellationToken) =>
                 {
                     beforeWait?.Invoke(cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
-                    clock.Advance(delay);
+                    Clock.Advance(delay);
                 });
 
         internal IEnumerable<byte> TargetWrites() =>
@@ -1606,6 +1800,8 @@ internal static class Program
 
         internal Func<ushort[], byte[], byte[]>? TransformNextRead { get; set; }
 
+        internal Action<ushort[], byte[]>? AfterRead { get; set; }
+
         internal bool Disposed { get; private set; }
 
         public byte[] Read(ushort[] addresses)
@@ -1621,6 +1817,7 @@ internal static class Program
             byte[] values = addresses.Select(ByteAt).ToArray();
             Func<ushort[], byte[], byte[]>? transform = TransformNextRead;
             TransformNextRead = null;
+            AfterRead?.Invoke(addresses, values);
             return transform is null ? values : transform(addresses, values);
         }
 

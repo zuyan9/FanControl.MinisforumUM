@@ -7,7 +7,7 @@ namespace FanControl.MinisforumUMSeries;
 
 internal static class Program
 {
-    private const string ToolVersion = "0.2.2-debug.1";
+    private const string ToolVersion = "0.2.2-debug.2";
     private const string ToolMutexName = @"Global\MinisforumFanDiagnostics";
     private const string MonitorLibraryName = "LibreHardwareMonitorLib.dll";
 
@@ -64,7 +64,7 @@ internal static class Program
                 $"process architecture: {RuntimeInformation.ProcessArchitecture}; " +
                 $"runtime: {RuntimeInformation.FrameworkDescription}");
             Log($"Options: hold-seconds={options.HoldSeconds}; " +
-                $"target={(options.TargetPercent is int target ? target.ToString(CultureInfo.InvariantCulture) : "automatic 100/70/40")}");
+                $"target={(options.TargetPercent is int target ? target.ToString(CultureInfo.InvariantCulture) : "automatic 100/80/60/50/40/30/20/10")}");
             exitCode = Run(options, Log);
             Log($"Exit code: {exitCode}. Report saved to: {reportPath}");
         }
@@ -296,9 +296,10 @@ internal static class Program
 
             Close Fan Control and other fan-control utilities before starting.
             Run without options to record a baseline, test system-fan targets of
-            100%, 70%, and 40%, then restore firmware control and record recovery.
+            100%, 80%, 60%, 50%, 40%, 30%, 20%, and 10%, then restore firmware control.
             Targets are percentages of the profile's supported speed range, not PWM duty.
-            The default test takes about 4 minutes. Ctrl+C stops and restores control.
+            The default test takes about 9 minutes. Ctrl+C stops and restores control.
+            Each stage includes a final-10-second RPM median and RPM/PWM ranges.
 
             Usage: MinisforumFanDiagnostics.exe [options]
               --target N            Test one target from 0 to 100 instead of the sweep.

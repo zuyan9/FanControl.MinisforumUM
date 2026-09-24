@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 
 namespace FanControl.MinisforumUMSeries;
@@ -45,7 +46,7 @@ internal sealed class SystemFanDebugSession(
             Configuration("before");
             Observe("firmware-baseline", 10, null);
 
-            int[] targets = options.TargetPercent is int target ? [target] : [100, 70, 40];
+            int[] targets = options.TargetPercent is int target ? [target] : [100, 80, 60, 50, 40, 30, 20, 10];
             foreach (int percentage in targets)
             {
                 Check();
@@ -128,10 +129,12 @@ internal sealed class SystemFanDebugSession(
             int? maximumRpm = null;
             byte minimumDuty = byte.MaxValue;
             byte maximumDuty = 0;
+            List<ObservedSample> observations = [];
             while (true)
             {
                 Check();
                 SystemFanTraceSample sample = backend.ReadSystemFanTrace();
+                TimeSpan sampledAt = time.GetElapsedTime(stageStarted);
                 log($"stage={stage}; " + SystemFanTrace.Format(sample, time.GetElapsedTime(started)));
                 // Log before checking so an ownership loss or target overwrite
                 // is recorded. Do not repeatedly reassert a stage target.
@@ -150,21 +153,60 @@ internal sealed class SystemFanDebugSession(
                 samples++;
                 minimumDuty = Math.Min(minimumDuty, Math.Min(sample.Values[3], sample.Values[19]));
                 maximumDuty = Math.Max(maximumDuty, Math.Max(sample.Values[3], sample.Values[19]));
-                if (F7bsdTelemetryDecoder.TryDecodeCounter(sample.Values.AsSpan(4, 3), out int rpm))
+                bool validRpm = F7bsdTelemetryDecoder.TryDecodeCounter(sample.Values.AsSpan(4, 3), out int rpm);
+                if (validRpm)
                 {
                     minimumRpm = minimumRpm.HasValue ? Math.Min(minimumRpm.Value, rpm) : rpm;
                     maximumRpm = maximumRpm.HasValue ? Math.Max(maximumRpm.Value, rpm) : rpm;
                 }
+                observations.Add(new(
+                    sampledAt,
+                    Math.Min(sample.Values[3], sample.Values[19]),
+                    Math.Max(sample.Values[3], sample.Values[19]),
+                    validRpm ? rpm : null));
                 TimeSpan remaining = TimeSpan.FromSeconds(seconds) - time.GetElapsedTime(stageStarted);
                 if (remaining <= TimeSpan.Zero)
                     break;
                 delay(remaining < TimeSpan.FromSeconds(2) ? remaining : TimeSpan.FromSeconds(2), cancellationToken);
             }
-            log($"Summary stage={stage}: samples={samples}; pwm2-range={minimumDuty}..{maximumDuty}; " +
+            TimeSpan elapsed = time.GetElapsedTime(stageStarted);
+            log($"Summary stage={stage}: samples={samples}; " +
+                $"duration={elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s; " +
+                $"pwm2-range={minimumDuty}..{maximumDuty}; " +
                 $"rpm-range={minimumRpm?.ToString() ?? "unknown"}..{maximumRpm?.ToString() ?? "unknown"}. " +
                 "Ranges are observations, not a diagnosis or proof of settled speed.");
+
+            // Anchor the final window to the actual stage end. A delayed log must
+            // not make an old hardware sample appear recent. Short holds use the
+            // requested duration; invalid tach samples still contribute PWM data.
+            TimeSpan window = TimeSpan.FromSeconds(Math.Min(10, seconds));
+            ObservedSample[] finalSamples = observations
+                .Where(sample => sample.Elapsed >= elapsed - window)
+                .ToArray();
+            int[] finalRpms = finalSamples
+                .Where(sample => sample.Rpm.HasValue)
+                .Select(sample => sample.Rpm!.Value)
+                .Order()
+                .ToArray();
+            string median = finalRpms.Length == 0
+                ? "unknown"
+                : ((finalRpms[(finalRpms.Length - 1) / 2] + (double)finalRpms[finalRpms.Length / 2]) / 2)
+                    .ToString("0.#", CultureInfo.InvariantCulture);
+            string rpmRange = finalRpms.Length == 0
+                ? "unknown..unknown"
+                : $"{finalRpms[0]}..{finalRpms[^1]}";
+            string dutyRange = finalSamples.Length == 0
+                ? "unknown..unknown"
+                : $"{finalSamples.Min(sample => sample.MinimumDuty)}..{finalSamples.Max(sample => sample.MaximumDuty)}";
+            log($"Final window stage={stage}: " +
+                $"window={window.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s; " +
+                $"samples={finalSamples.Length}; valid-rpm-samples={finalRpms.Length}; " +
+                $"rpm-median={median}; rpm-range={rpmRange}; pwm2-range={dutyRange}.");
         }
     }
+
+    private readonly record struct ObservedSample(
+        TimeSpan Elapsed, byte MinimumDuty, byte MaximumDuty, int? Rpm);
 
     private static void Wait(TimeSpan duration, CancellationToken cancellationToken)
     {
