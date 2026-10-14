@@ -71,4 +71,4 @@ check.
 - [Building, testing, and contributing](CONTRIBUTING.md)
 
 ## Linux support
-Not here, but checkout [mordilloSan/fan_control](https://github.com/morluto/rea)
+Not here, but checkout [mordilloSan/fan_control](https://github.com/mordilloSan/fan_control)
