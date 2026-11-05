@@ -26,6 +26,28 @@ internal static class Program
         93, 88,
     ];
 
+    private static readonly byte[] F7bslStandardBands =
+    [
+        25, 0,
+        45, 25,
+        54, 45,
+        66, 54,
+        76, 66,
+        88, 76,
+        92, 88,
+    ];
+
+    private static readonly byte[] F7bslPerformanceBands =
+    [
+        25, 0,
+        45, 25,
+        54, 45,
+        66, 54,
+        80, 66,
+        88, 80,
+        92, 88,
+    ];
+
     private static readonly byte[] StandardSystemPolicy =
     [
         0, 25, 0,
@@ -51,6 +73,10 @@ internal static class Program
         new("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.08")),
         new("f7bsi", F7bsiHost("F7BSI", "MGF7BSI", "1.09")),
         new("f7bsi", F7bsiHost("F7BSW", "MGF7BSW", "1.01")),
+        new("f7bsl", F7bslHost("1.01")),
+        new("f7bsl", F7bslHost("1.02")),
+        new("f7bsl", F7bslHost("1.03")),
+        new("f7bsl", F7bslHost("1.04")),
         new("hpbsd", HpbsdHost(ecMinor: 1)),
         new("hpbsd", HpbsdHost(ecMinor: 2)),
     ];
@@ -95,6 +121,17 @@ internal static class Program
                     [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
                 new(0xb2, PerformanceBands,
                     [0, 18, 22, 29, 31, 34, 37, 0, 20, 77, 16, 25, 37, 125]),
+            ]),
+        new(
+            "F7BSL",
+            "f7bsl",
+            ReducedSystemPolicy,
+            40,
+            [
+                new(0xb1, F7bslStandardBands,
+                    [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75], CriticalRow: [51, 100, 92, 0]),
+                new(0xb2, F7bslPerformanceBands,
+                    [0, 18, 22, 29, 31, 32, 34, 0, 20, 77, 16, 7, 25, 125], CriticalRow: [51, 100, 92, 0]),
             ]),
         new(
             "HPBSD",
@@ -767,7 +804,7 @@ internal static class Program
         cpu.Selector,
         0,
         .. cpu.Bands,
-        51, 100, 93, 0,
+        ..(byte[])(cpu.CriticalRow ?? [51, 100, 93, 0]),
         .. cpu.Baseline,
     ];
 
@@ -817,6 +854,17 @@ internal static class Program
             biosVersion,
             0,
             5);
+
+    private static HostIdentitySnapshot F7bslHost(string biosVersion) => new(
+        "EliteMini Series",
+        "1.0",
+        "MGF7BSL",
+        "EliteMini",
+        "F7BSL",
+        "1.0",
+        biosVersion,
+        0,
+        4);
 
     private static HostIdentitySnapshot HpbsdHost(int ecMinor) => new(
         "EliteMini Series",
@@ -879,7 +927,8 @@ internal static class Program
     private sealed record ExpectedCpu(
         byte Selector,
         byte[] Bands,
-        byte[] Baseline);
+        byte[] Baseline,
+        byte[]? CriticalRow = null);
 
     private sealed record ExpectedProfile(
         string Name,
@@ -919,7 +968,7 @@ internal static class Program
                     selector,
                     0,
                     .. cpu.Bands,
-                    51, 100, 93, 0,
+                    .. cpu.CriticalRow.IsEmpty ? new byte[] { 51, 100, 93, 0 } : cpu.CriticalRow.ToArray(),
                     .. cpu.Baseline,
                 ]);
             SetBytes(
