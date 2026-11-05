@@ -134,12 +134,14 @@ internal sealed class CpuProfileDefinition
 {
     private readonly byte[] bands;
     private readonly byte[] baseline;
+    private readonly byte[] criticalRow;
 
-    internal CpuProfileDefinition(byte selector, byte[] bands, byte[] baseline)
+    internal CpuProfileDefinition(byte selector, byte[] bands, byte[] baseline, byte[]? criticalRow = null)
     {
         Selector = selector;
         this.bands = (byte[])bands.Clone();
         this.baseline = (byte[])baseline.Clone();
+        this.criticalRow = (byte[])(criticalRow ?? [51, 100, 93, 0]).Clone();
     }
 
     internal byte Selector { get; }
@@ -147,6 +149,8 @@ internal sealed class CpuProfileDefinition
     internal ReadOnlySpan<byte> Bands => bands;
 
     internal ReadOnlySpan<byte> Baseline => baseline;
+
+    internal ReadOnlySpan<byte> CriticalRow => criticalRow;
 }
 
 internal sealed class F7PlatformProfile
@@ -221,14 +225,25 @@ internal sealed class F7PlatformProfile
 
         foreach (CpuProfileDefinition cpu in CpuProfiles)
         {
-            if (cpu.Bands.Length != F7bsdProfile.CpuBandAddresses.Length ||
-                cpu.Baseline.Length != F7bsdProfile.CpuOwnedAddresses.Length ||
-                cpu.Selector is not (0x00 or 0xb1 or 0xb2) ||
-                cpu.Baseline[..F7bsdProfile.CpuBaseAddresses.Length]
-                    .ContainsAnyExceptInRange((byte)0, F7bsdProfile.MaximumCode) ||
-                !HasContiguousBands(cpu.Bands, finalUpper: 93))
+            if (cpu.Bands.Length != F7bsdProfile.CpuBandAddresses.Length)
             {
-                throw new ArgumentException($"CPU profile {Id}/0x{cpu.Selector:X2} is invalid.");
+                throw new ArgumentException($"CPU profile {Id}/0x{cpu.Selector:X2} is invalid. (F7bsdProfile.CpuBandAddresses.Length).");
+            }
+            if (cpu.Baseline.Length != F7bsdProfile.CpuOwnedAddresses.Length)
+            {
+                throw new ArgumentException($"CPU profile {Id}/0x{cpu.Selector:X2} is invalid. (F7bsdProfile.CpuOwnedAddresses.Length).");
+            }
+            if (cpu.Selector is not (0x00 or 0xb1 or 0xb2))
+            {
+                throw new ArgumentException($"CPU profile {Id}/0x{cpu.Selector:X2} is invalid. (cpu.Selector).");
+            }
+            if (cpu.Baseline[..F7bsdProfile.CpuBaseAddresses.Length].ContainsAnyExceptInRange((byte)0, F7bsdProfile.MaximumCode))
+            {
+                throw new ArgumentException($"CPU profile {Id}/0x{cpu.Selector:X2} is invalid. (cpu.Baseline).");
+            }
+            if (cpu.CriticalRow.Length != 4)
+            {
+                throw new ArgumentException($"CPU critical row for profile {Id} must contain 4 bytes.");
             }
         }
 
@@ -312,6 +327,28 @@ internal static class F7ProfileCatalog
         93, 88,
     ];
 
+    private static readonly byte[] F7bslStandardBands =
+    [
+        25, 0,
+        45, 25,
+        54, 45,
+        66, 54,
+        76, 66,
+        88, 76,
+        92, 88,
+    ];
+
+    private static readonly byte[] F7bslPerformanceBands =
+    [
+        25, 0,
+        45, 25,
+        54, 45,
+        66, 54,
+        80, 66,
+        88, 80,
+        92, 88,
+    ];
+
     private static readonly byte[] StandardSystemPolicy =
     [
         0, 25, 0,
@@ -375,6 +412,14 @@ internal static class F7ProfileCatalog
             [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75]),
         Cpu(0xb2, PerformanceBands,
             [0, 18, 22, 29, 31, 34, 37, 0, 20, 77, 16, 25, 37, 125]),
+    ];
+
+    private static readonly CpuProfileDefinition[] F7bslCpuProfiles =
+    [
+        Cpu(0xb1, F7bslStandardBands,
+            [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75], criticalRow: [51, 100, 92, 0]),
+        Cpu(0xb2, F7bslPerformanceBands,
+            [0, 18, 22, 29, 31, 32, 34, 0, 20, 77, 16, 7, 25, 125], criticalRow: [51, 100, 92, 0]),
     ];
 
     private static readonly CpuProfileDefinition[] HpbsdCpuProfiles =
@@ -458,6 +503,24 @@ internal static class F7ProfileCatalog
             ReducedSystemPolicy,
             systemMaximumCode: 51),
         new(
+            "f7bsl",
+            "F7BSL",
+            [
+                Host(
+                    "EliteMini Series",
+                    "1.0",
+                    "EliteMini",
+                    "F7BSL",
+                    "1.0",
+                    [(0, 4)],
+                    "MGF7BSL"),
+            ],
+            ExactRevision02Pnp,
+            ExactRevision02Controller,
+            F7bslCpuProfiles,
+            ReducedSystemPolicy,
+            systemMaximumCode: 40),
+        new(
             "hpbsd",
             "HPBSD",
             [
@@ -522,7 +585,8 @@ internal static class F7ProfileCatalog
     private static CpuProfileDefinition Cpu(
         byte selector,
         byte[] bands,
-        byte[] baseline) => new(selector, bands, baseline);
+        byte[] baseline,
+        byte[]? criticalRow = null) => new(selector, bands, baseline, criticalRow ?? [51, 100, 93, 0]);
 
     private static HostRequirement Host(
         string product,
