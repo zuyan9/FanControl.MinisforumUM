@@ -19,6 +19,8 @@ raw EC temperatures, and independent CPU and system fan controls.
 | UM760 Slim, UM870 Slim | `0.5` | `1.08`, `1.09` | Firmware-derived |
 | UM760 Plus, UM870 Plus | `0.5` | `1.01` | Firmware-derived |
 | UM880 Plus | `0.5` | `1.01` | Live write-tested |
+| UM690L Slim (UM690 Slim) | `0.4` | `1.01`, `1.02`, `1.03`, `1.04` | Live write-tested (`1.01`) |
+| UM750L Slim (UM750 Slim), UM773L Slim (UM773 Slim) | `0.4` | `1.01`, `1.02`, `1.03`, `1.04` | Firmware-derived |
 | UM880 Pro, UM890 Pro | `0.1` or `0.2` | `1.06` | Firmware-derived |
 
 BIOS versions are recorded for reference and do not restrict loading. The plugin
@@ -53,7 +55,8 @@ system fan controls. Fan Control owns the requested policy; the plugin does not
 add minimums, curves, thermal promotion, or rate limiting.
 
 CPU control preserves the firmware's independent critical-temperature row, which
-requests full speed at 94 C and above. System control temporarily uses the
+requests full speed at 94 C and above (93 C and above on F7BSL models). System
+control temporarily uses the
 firmware's fixed-target handoff and therefore has no automatic temperature
 fallback while active. Resetting or disabling a control, refreshing the plugin,
 or closing Fan Control normally restores firmware control.

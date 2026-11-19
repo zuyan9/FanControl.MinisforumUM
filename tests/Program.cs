@@ -64,6 +64,10 @@ internal static class Program
         0, 0, 0,
     ];
 
+    private static readonly byte[] DefaultCriticalRow = [51, 100, 93, 0];
+
+    private static readonly byte[] F7bslCriticalRow = [51, 100, 92, 0];
+
     private static readonly SupportedHost[] SupportedHosts =
     [
         new("f7bsd", F7bsdHost()),
@@ -129,9 +133,11 @@ internal static class Program
             40,
             [
                 new(0xb1, F7bslStandardBands,
-                    [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75], CriticalRow: [51, 100, 92, 0]),
+                    [0, 16, 18, 22, 25, 27, 29, 0, 10, 44, 25, 20, 16, 75],
+                    CriticalRow: F7bslCriticalRow),
                 new(0xb2, F7bslPerformanceBands,
-                    [0, 18, 22, 29, 31, 32, 34, 0, 20, 77, 16, 7, 25, 125], CriticalRow: [51, 100, 92, 0]),
+                    [0, 18, 22, 29, 31, 32, 34, 0, 20, 77, 16, 7, 25, 125],
+                    CriticalRow: F7bslCriticalRow),
             ]),
         new(
             "HPBSD",
@@ -163,6 +169,7 @@ internal static class Program
                 (Action)(() => AssertCanonicalProfile(expected)))));
         tests.AddRange(
         [
+            ("profile band and critical-row validation", ProfileBandAndCriticalRowValidation),
             ("controller masks", ControllerMaskBehavior),
             ("all compiled profiles enable normal control", AllProfilesEnableNormalControl),
             ("system diagnostics coalesce changes and clear on reset", SystemDiagnosticsCoalesce),
@@ -224,7 +231,7 @@ internal static class Program
                 exact with { EcMajor = 255 },
                 exact with { EcMinor = 255 },
             ];
-            if (exact.Board == "F7BSI")
+            if (exact.Board is "F7BSI" or "F7BSL")
             {
                 mismatches.AddRange(
                 [
@@ -234,8 +241,8 @@ internal static class Program
                     exact with { Family = "Venus" },
                     exact with { BoardVersion = "1.1" },
                     exact with { EcMajor = 1 },
-                    exact with { EcMinor = 4 },
-                    exact with { EcMinor = 6 },
+                    exact with { EcMinor = exact.EcMinor - 1 },
+                    exact with { EcMinor = exact.EcMinor + 1 },
                 ]);
             }
 
@@ -327,9 +334,11 @@ internal static class Program
 
         foreach (ExpectedCpu cpu in expected.Cpus)
         {
+            byte[] expectedCriticalRow = cpu.CriticalRow ?? DefaultCriticalRow;
             CpuProfileDefinition actual = profile.CpuProfiles.Single(
                 item => item.Selector == cpu.Selector);
             SequenceEqual(cpu.Bands, actual.Bands.ToArray());
+            SequenceEqual(expectedCriticalRow, actual.CriticalRow.ToArray());
             SequenceEqual(cpu.Baseline, actual.Baseline.ToArray());
 
             byte[] snapshot = BuildCpuSnapshot(cpu);
@@ -347,6 +356,57 @@ internal static class Program
             corruptSnapshot[2] ^= 1;
             Throws<PlatformNotSupportedException>(() =>
                 F7bsdProfile.ClassifyCpuStartupSnapshot(profile, corruptSnapshot));
+
+            byte[] corruptCriticalSnapshot = (byte[])snapshot.Clone();
+            corruptCriticalSnapshot[2 + F7bsdProfile.CpuBandAddresses.Length + 2] ^= 1;
+            Throws<PlatformNotSupportedException>(() =>
+                F7bsdProfile.ClassifyCpuStartupSnapshot(profile, corruptCriticalSnapshot));
+        }
+    }
+
+    private static void ProfileBandAndCriticalRowValidation()
+    {
+        F7PlatformProfile f7bsl = F7ProfileCatalog.Get("f7bsl");
+        byte[] baseline = f7bsl.CpuProfiles[0].Baseline.ToArray();
+        HostRequirement[] hosts =
+        [
+            new(
+                "EliteMini Series",
+                "1.0",
+                "EliteMini",
+                "F7BSL",
+                "1.0",
+                [new EcVersion(0, 4)],
+                "MGF7BSL"),
+        ];
+
+        static void Create(
+            HostRequirement[] requiredHosts,
+            F7PlatformProfile template,
+            CpuProfileDefinition cpu) => _ = new F7PlatformProfile(
+                "invalid",
+                "Invalid",
+                requiredHosts,
+                template.PnpIdentity,
+                template.ControllerIdentity,
+                [cpu],
+                ReducedSystemPolicy,
+                systemMaximumCode: 40);
+
+        CpuProfileDefinition[] invalidProfiles =
+        [
+            new(0xb1, F7bslStandardBands, baseline, DefaultCriticalRow),
+            new(0xb1, StandardBands, baseline, F7bslCriticalRow),
+            new(0xb1, F7bslStandardBands, baseline, [50, 100, 92, 0]),
+            new(0xb1, F7bslStandardBands, baseline, [51, 99, 92, 0]),
+            new(0xb1, F7bslStandardBands, baseline, [51, 100, 100, 0]),
+            new(0xb1, F7bslStandardBands, baseline, [51, 100, 92, 1]),
+            new(0xb1, F7bslStandardBands, baseline, [51, 100, 92]),
+        ];
+
+        foreach (CpuProfileDefinition invalid in invalidProfiles)
+        {
+            Throws<ArgumentException>(() => Create(hosts, f7bsl, invalid));
         }
     }
 
@@ -484,32 +544,35 @@ internal static class Program
 
     private static void HpbsdSystemMaximum()
     {
-        F7PlatformProfile profile = F7ProfileCatalog.Get("hpbsd");
-        Equal((byte)40, profile.SystemMaximumCode);
-        Equal((byte)0, F7bsdProfile.ToCode(0f, profile.SystemMaximumCode));
-        Equal((byte)20, F7bsdProfile.ToCode(50f, profile.SystemMaximumCode));
-        Equal((byte)40, F7bsdProfile.ToCode(100f, profile.SystemMaximumCode));
-        Equal(0f, F7bsdProfile.ToPercentage(0, profile.SystemMaximumCode));
-        Equal(50f, F7bsdProfile.ToPercentage(20, profile.SystemMaximumCode));
-        Equal(100f, F7bsdProfile.ToPercentage(40, profile.SystemMaximumCode));
-        Throws<ArgumentOutOfRangeException>(() =>
-            F7bsdProfile.ToPercentage(41, profile.SystemMaximumCode));
+        foreach (string profileId in new[] { "f7bsl", "hpbsd" })
+        {
+            F7PlatformProfile profile = F7ProfileCatalog.Get(profileId);
+            Equal((byte)40, profile.SystemMaximumCode);
+            Equal((byte)0, F7bsdProfile.ToCode(0f, profile.SystemMaximumCode));
+            Equal((byte)20, F7bsdProfile.ToCode(50f, profile.SystemMaximumCode));
+            Equal((byte)40, F7bsdProfile.ToCode(100f, profile.SystemMaximumCode));
+            Equal(0f, F7bsdProfile.ToPercentage(0, profile.SystemMaximumCode));
+            Equal(50f, F7bsdProfile.ToPercentage(20, profile.SystemMaximumCode));
+            Equal(100f, F7bsdProfile.ToPercentage(40, profile.SystemMaximumCode));
+            Throws<ArgumentOutOfRangeException>(() =>
+                F7bsdProfile.ToPercentage(41, profile.SystemMaximumCode));
 
-        F7bsdProfile.AssertWritesAllowed(
-            profile,
-            [new EcWrite(F7bsdProfile.SystemTargetAddress, 40)]);
-        Throws<InvalidOperationException>(() => F7bsdProfile.AssertWritesAllowed(
-            profile,
-            [new EcWrite(F7bsdProfile.SystemTargetAddress, 41)]));
-        Equal(
-            SystemStartupState.Firmware,
-            F7bsdProfile.ClassifySystemStartupState(profile, [45, 0, 40]));
-        Equal(
-            SystemStartupState.Unsupported,
-            F7bsdProfile.ClassifySystemStartupState(profile, [45, 0, 41]));
-        F7bsdProfile.ValidateOwnedSystemState(profile, [0xff, 0xff, 40], 40);
-        Throws<IOException>(() =>
-            F7bsdProfile.ValidateOwnedSystemState(profile, [0xff, 0xff, 41]));
+            F7bsdProfile.AssertWritesAllowed(
+                profile,
+                [new EcWrite(F7bsdProfile.SystemTargetAddress, 40)]);
+            Throws<InvalidOperationException>(() => F7bsdProfile.AssertWritesAllowed(
+                profile,
+                [new EcWrite(F7bsdProfile.SystemTargetAddress, 41)]));
+            Equal(
+                SystemStartupState.Firmware,
+                F7bsdProfile.ClassifySystemStartupState(profile, [45, 0, 40]));
+            Equal(
+                SystemStartupState.Unsupported,
+                F7bsdProfile.ClassifySystemStartupState(profile, [45, 0, 41]));
+            F7bsdProfile.ValidateOwnedSystemState(profile, [0xff, 0xff, 40], 40);
+            Throws<IOException>(() =>
+                F7bsdProfile.ValidateOwnedSystemState(profile, [0xff, 0xff, 41]));
+        }
     }
 
     private static void F7bsdSetResetTransactions()
@@ -804,7 +867,7 @@ internal static class Program
         cpu.Selector,
         0,
         .. cpu.Bands,
-        ..(byte[])(cpu.CriticalRow ?? [51, 100, 93, 0]),
+        .. (cpu.CriticalRow ?? DefaultCriticalRow),
         .. cpu.Baseline,
     ];
 
@@ -968,7 +1031,7 @@ internal static class Program
                     selector,
                     0,
                     .. cpu.Bands,
-                    .. cpu.CriticalRow.IsEmpty ? new byte[] { 51, 100, 93, 0 } : cpu.CriticalRow.ToArray(),
+                    .. cpu.CriticalRow,
                     .. cpu.Baseline,
                 ]);
             SetBytes(

@@ -125,7 +125,7 @@ internal static class F7bsdProfile
         CpuProfileDefinition profile = ProfileFor(platform, snapshot[0]);
         int bandsOffset = 2;
         int criticalOffset = bandsOffset + CpuBandAddresses.Length;
-        int mutableOffset = criticalOffset + profile.CriticalRow.Length;
+        int mutableOffset = criticalOffset + CpuCriticalAddresses.Length;
 
         if (snapshot[1] != 0)
         {
@@ -138,7 +138,7 @@ internal static class F7bsdProfile
             throw new PlatformNotSupportedException(
                 $"CPU temperature bands do not match profile 0x{profile.Selector:X2}.");
         }
-        if (!snapshot.Slice(criticalOffset, profile.CriticalRow.Length)
+        if (!snapshot.Slice(criticalOffset, CpuCriticalAddresses.Length)
             .SequenceEqual(profile.CriticalRow))
         {
             throw new PlatformNotSupportedException(
@@ -146,7 +146,6 @@ internal static class F7bsdProfile
         }
 
         ReadOnlySpan<byte> mutable = snapshot[mutableOffset..];
-
         CpuStartupState state = mutable.SequenceEqual(profile.Baseline)
             ? CpuStartupState.Firmware
             : IsRecoverableCpuMutable(mutable, profile.Baseline)

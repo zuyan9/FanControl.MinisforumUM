@@ -33,7 +33,7 @@ Vendor package model mappings alone never authorize EC access.
 | `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
 | `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
 | `f7bsi` | `EliteMini Series`, `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, EC `0.5`; or `F7BSW` rev `1.0`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
-| `f7bsl` | `EliteMini Series`, `F7BSL` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSL`, EC `0.4` | UM690 Slim; UM750 Slim; UM773 Slim | `0..40` | Telemetry and controls |
+| `f7bsl` | `EliteMini Series`, `F7BSL` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSL`, EC `0.4` | UM690L Slim (UM690 Slim); UM750L Slim (UM750 Slim); UM773L Slim (UM773 Slim) | `0..40` | Telemetry and controls |
 | `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
 
 BIOS version is optional diagnostic metadata. It does not select a profile,
@@ -51,8 +51,8 @@ rejects a mismatch as soon as it can be detected.
 
 ## Evidence and validation limits
 
-UM780 XTX and UM880 Plus have been live write-tested with the BIOS and EC
-combinations recorded in the README.
+UM780 XTX, UM880 Plus, and UM690L Slim (UM690 Slim) have been live write-tested
+with the BIOS and EC combinations recorded in the README.
 The UM790 XTX is included because Minisforum publishes one identical full
 BIOS/EC image for both XTX models, but it still needs live validation. The
 remaining models rely on offline firmware analysis and public DMI evidence.
@@ -90,7 +90,7 @@ In addition to the exact host tuple, every load requires:
 - the exact compiled system policy table and a canonical or exactly
   recoverable ownership state.
 
-The `f7bsd` and `f7bsh-f7bsd` profiles pin PNP identity `55 71 02` and
+The `f7bsd`, `f7bsh-f7bsd`, and `f7bsl` profiles pin PNP identity `55 71 02` and
 controller profile `55 71 02 43 14 7f`. The `f7bsc`, `f7bsi`/F7BSW, and
 `hpbsd` profiles require the same product, I2EC-mode, clock, and counter bytes.
 They accept a silicon revision only when the physical PNP and live XRAM
@@ -104,9 +104,9 @@ does not match an explicitly compiled or exactly recoverable state.
 ## Target scaling and firmware interaction
 
 Fan Control percentages map linearly to each profile's EC target-code range.
-CPU targets and all non-HPBSD system targets use `0..51`, nominally
-`0..5100 RPM`. HPBSD and F7BSL system targets use `0..40`; `100%` therefore writes code
-`40`, not `51`.
+CPU targets use `0..51`, nominally `0..5100 RPM`. System targets also use
+`0..51` except on F7BSL and HPBSD, which use `0..40`; `100%` on those profiles
+therefore writes code `40`, not `51`.
 
 These are requested target codes, not guaranteed physical fan speeds. Successful
 target and ownership readback does not establish that the fan reached that RPM;
@@ -135,8 +135,7 @@ again at log time.
 
 F7BSI and F7BSW still use `0..51` even though their stored system table tops
 out at `40`: the active firmware selector independently hardcodes `51` for its
-hottest band. HPBSD loads its target from the stored row instead and therefore
-remains capped at `40`.
+hottest band. F7BSL and HPBSD remain capped at their stored maximum of `40`.
 
 The plugin adds no minimum target, fan curve, thermal promotion, or rate limit.
 Fan Control owns that policy.
@@ -145,7 +144,7 @@ Fan Control owns that policy.
 
 CPU control writes the same target into all seven normal temperature rows. It
 does not change the independent critical row, so firmware continues to request
-full speed at 94 C and above.
+full speed at 94 C and above (93 C and above on `f7bsl`).
 
 The plugin recognizes the BIOS-selected Default, Balance, or Performance CPU
 table and restores that exact table when raw control ends.
