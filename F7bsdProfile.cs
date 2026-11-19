@@ -85,8 +85,6 @@ internal static class F7bsdProfile
     internal static readonly ushort[] SystemEffectiveTemperaturePollAddresses =
         [SystemEffectiveTemperatureAddress];
 
-    private static readonly byte[] ExpectedCpuCriticalRow = [51, 100, 93, 0];
-
     private static readonly HashSet<ushort> ReadAllowlist =
     [
         .. ControllerProfileAddresses,
@@ -127,7 +125,7 @@ internal static class F7bsdProfile
         CpuProfileDefinition profile = ProfileFor(platform, snapshot[0]);
         int bandsOffset = 2;
         int criticalOffset = bandsOffset + CpuBandAddresses.Length;
-        int mutableOffset = criticalOffset + CpuCriticalAddresses.Length;
+        int mutableOffset = criticalOffset + profile.CriticalRow.Length;
 
         if (snapshot[1] != 0)
         {
@@ -140,14 +138,15 @@ internal static class F7bsdProfile
             throw new PlatformNotSupportedException(
                 $"CPU temperature bands do not match profile 0x{profile.Selector:X2}.");
         }
-        if (!snapshot.Slice(criticalOffset, CpuCriticalAddresses.Length)
-            .SequenceEqual(ExpectedCpuCriticalRow))
+        if (!snapshot.Slice(criticalOffset, profile.CriticalRow.Length)
+            .SequenceEqual(profile.CriticalRow))
         {
             throw new PlatformNotSupportedException(
-                "The CPU critical row is not (51,100,93,0).");
+                $"CPU critical row does not match profile 0x{profile.Selector:X2}.");
         }
 
         ReadOnlySpan<byte> mutable = snapshot[mutableOffset..];
+
         CpuStartupState state = mutable.SequenceEqual(profile.Baseline)
             ? CpuStartupState.Firmware
             : IsRecoverableCpuMutable(mutable, profile.Baseline)

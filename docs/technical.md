@@ -32,7 +32,8 @@ Vendor package model mappings alone never authorize EC access.
 | `f7bsd` | `Venus series`, `F7BSD` rev `1.1`, EC `0.8` | UM780 XTX; UM790 XTX | `0..51` | Telemetry and controls |
 | `f7bsh-f7bsd` | `Venus series`, `F7BSH` rev `1.1`, EC `0.8` | UM690 Pro | `0..51` | Telemetry and controls |
 | `f7bsc` | `Venus series`, `F7BSC` rev `Default string`, EC `2.6` | UM760 Pro; UM780 Pro; UM790 Pro | `0..51` | Telemetry and controls |
-| `f7bsi` | `EliteMini Series`; `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, EC `0.5`; or `F7BSW` rev `1.0`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
+| `f7bsi` | `EliteMini Series`, `F7BSI` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSI`, EC `0.5`; or `F7BSW` rev `1.0`, EC `0.5` | F7BSI: UM760 Slim, UM870 Slim; F7BSW: UM760 Plus, UM870 Plus, UM880 Plus | `0..51` | Telemetry and controls |
+| `f7bsl` | `EliteMini Series`, `F7BSL` rev `1.0`, system rev `1.0`, family `EliteMini`, SKU `MGF7BSL`, EC `0.4` | UM690 Slim; UM750 Slim; UM773 Slim | `0..40` | Telemetry and controls |
 | `hpbsd` | `EliteMini Series`, `HPBSD` rev `1.0`, EC `0.1` or `0.2` | UM880 Pro; UM890 Pro | `0..40` | Telemetry and controls |
 
 BIOS version is optional diagnostic metadata. It does not select a profile,
@@ -85,7 +86,7 @@ In addition to the exact host tuple, every load requires:
 - matching physical PNP and live-controller signatures, including agreement
   on the silicon revision byte;
 - an exact byte-for-byte match for a compiled BIOS CPU selector, temperature
-  bands, canonical bases and slopes, and critical row `(51,100,93,0)`; and
+  bands, canonical bases and slopes, and critical row `(51,100,93,0)` (except `f7bsl` where critical row is `(51,100,92,0)`); and
 - the exact compiled system policy table and a canonical or exactly
   recoverable ownership state.
 
@@ -104,7 +105,7 @@ does not match an explicitly compiled or exactly recoverable state.
 
 Fan Control percentages map linearly to each profile's EC target-code range.
 CPU targets and all non-HPBSD system targets use `0..51`, nominally
-`0..5100 RPM`. HPBSD system targets use `0..40`; `100%` therefore writes code
+`0..5100 RPM`. HPBSD and F7BSL system targets use `0..40`; `100%` therefore writes code
 `40`, not `51`.
 
 These are requested target codes, not guaranteed physical fan speeds. Successful
